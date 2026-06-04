@@ -11,6 +11,7 @@
  - Adjusted Ghostchi character positioning on small screens to avoid status bar overlap
  - Updated Ghostchi docs with full XP source table and corrected quick start path
  - Added Wardriving settings for per-chip hop intervals and weighted 5GHz channel hopping, synced over GhostLink
+ - Replaced on/off settings rows with iOS-style toggles for a slightly nicer feel
 
 ## Revival v2.0-pre3
 

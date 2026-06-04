@@ -5,6 +5,7 @@
 #include "gui/asset_pack.h"
 #include "gui/design_tokens.h"
 #include "gui/gui_anim.h"
+#include "gui/ios_toggle.h"
 #include "lvgl.h"
 #include <stdlib.h>
 #include <string.h>
@@ -325,6 +326,9 @@ void options_view_refresh_styles(options_view_t *ov) {
             void *ud = lv_obj_get_user_data(child);
             if (ud == (void *)1 || ud == (void *)2) {
                 lv_obj_set_style_text_color(child, text, 0);
+            } else if (ud == IOS_TOGGLE_USER_DATA) {
+                // Theme change: re-apply the toggle's on-state color.
+                ios_toggle_refresh_style(child);
             }
         }
     }

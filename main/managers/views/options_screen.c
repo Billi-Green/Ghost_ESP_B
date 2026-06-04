@@ -12,6 +12,7 @@
 #include "gui/asset_pack.h"
 #include "gui/theme_palette_api.h"
 #include "gui/design_tokens.h"
+#include "gui/ios_toggle.h"
 #include "io_manager.h"
 #include "managers/views/airspace_monitor_screen.h"
 #include "managers/views/wardriving_screen.h"
@@ -806,6 +807,11 @@ static const char * const dual_comm_ethernet_options[] = {
 
 static void load_current_settings_values(void);
 
+typedef enum {
+    SETTING_WIDGET_VALUE_CYCLE = 0,   // text label + ◀ ▶ arrows (default)
+    SETTING_WIDGET_TOGGLE,            // iOS-style on/off switch
+} SettingWidgetType;
+
 typedef struct {
     const char *label;
     int16_t setting_type;
@@ -815,6 +821,7 @@ typedef struct {
     uint8_t category_id;
     bool conditional;
     const char *condition_config;
+    SettingWidgetType widget;
 } SettingsItem;
 
 // RGB mode options - MIC Visualizer only available when enabled in config
@@ -887,83 +894,83 @@ static const char * const mic_contrast_options[] = {
 #endif
 
 static SettingsItem settings_items[] = {
-    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1, SETTINGS_CAT_DISPLAY, false, NULL},
+    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
-    {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_DISPLAY, false, NULL},
+    {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
 #endif
-    {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0, SETTINGS_CAT_DISPLAY, false, NULL},
-    
-    {"Menu Theme", SETTING_MENU_THEME, theme_options, 17, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
-    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
-    {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
-    {"BG Shade", SETTING_MENU_BG_SHADE, bg_shade_options, 4, 1, SETTINGS_CAT_APPEARANCE, false, NULL},
-    {"Rounded Menus", SETTING_MENU_ROUNDED, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
-    {"Item Borders", SETTING_MENU_ITEM_BORDERS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
-    {"Touch Drag Scroll", SETTING_TOUCH_DRAG_SCROLL, bool_options, 2, 1, SETTINGS_CAT_APPEARANCE, false, NULL},
-    {"Asset Pack", SETTING_RELOAD_ASSET_PACK, (const char * const *)asset_pack_options, 1, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
-    {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL},
-    
-    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, RGB_MODE_COUNT, 0, SETTINGS_CAT_LED_RGB, false, NULL},
-    {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_LED_RGB, false, NULL},
-    
-    {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1, SETTINGS_CAT_NAVIGATION, false, NULL},
-    {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0, SETTINGS_CAT_NAVIGATION, false, NULL},
+    {"Invert Colors", SETTING_INVERT_COLORS, bool_options, 2, 0, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_TOGGLE},
+
+    {"Menu Theme", SETTING_MENU_THEME, theme_options, 17, 0, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Menu Layout", SETTING_MENU_LAYOUT, menu_layout_options, 3, 0, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Zebra Menus", SETTING_ZEBRA_MENUS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"BG Shade", SETTING_MENU_BG_SHADE, bg_shade_options, 4, 1, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Rounded Menus", SETTING_MENU_ROUNDED, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Item Borders", SETTING_MENU_ITEM_BORDERS, bool_options, 2, 0, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Touch Drag Scroll", SETTING_TOUCH_DRAG_SCROLL, bool_options, 2, 1, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Asset Pack", SETTING_RELOAD_ASSET_PACK, (const char * const *)asset_pack_options, 1, 0, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Terminal Color", SETTING_TERMINAL_COLOR, textcolor_options, 8, 0, SETTINGS_CAT_APPEARANCE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+
+    {"RGB Mode", SETTING_RGB_MODE, rgb_mode_options, RGB_MODE_COUNT, 0, SETTINGS_CAT_LED_RGB, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Neopixel Brightness", SETTING_NEOPIXEL_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_LED_RGB, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+
+    {"Navigation Buttons", SETTING_NAV_BUTTONS, bool_options, 2, 1, SETTINGS_CAT_NAVIGATION, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Third Control", SETTING_THIRD_CONTROL, bool_options, 2, 0, SETTINGS_CAT_NAVIGATION, false, NULL, SETTING_WIDGET_TOGGLE},
 #ifdef CONFIG_USE_ENCODER
-    {"Invert Encoder", SETTING_ENCODER_INVERT, bool_options, 2, 0, SETTINGS_CAT_NAVIGATION, true, "CONFIG_USE_ENCODER"},
+    {"Invert Encoder", SETTING_ENCODER_INVERT, bool_options, 2, 0, SETTINGS_CAT_NAVIGATION, true, "CONFIG_USE_ENCODER", SETTING_WIDGET_TOGGLE},
 #endif
-    
+
 #ifdef CONFIG_WITH_STATUS_DISPLAY
-    {"Idle Animation", SETTING_IDLE_ANIMATION, idle_animation_options, 9, 0, SETTINGS_CAT_STATUS_DISPLAY, true, "CONFIG_WITH_STATUS_DISPLAY"},
-    {"Idle Anim Delay", SETTING_IDLE_ANIM_DELAY, idle_delay_options, 4, 0, SETTINGS_CAT_STATUS_DISPLAY, true, "CONFIG_WITH_STATUS_DISPLAY"},
+    {"Idle Animation", SETTING_IDLE_ANIMATION, idle_animation_options, 9, 0, SETTINGS_CAT_STATUS_DISPLAY, true, "CONFIG_WITH_STATUS_DISPLAY", SETTING_WIDGET_VALUE_CYCLE},
+    {"Idle Anim Delay", SETTING_IDLE_ANIM_DELAY, idle_delay_options, 4, 0, SETTINGS_CAT_STATUS_DISPLAY, true, "CONFIG_WITH_STATUS_DISPLAY", SETTING_WIDGET_VALUE_CYCLE},
 #endif
-    
-    {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL},
-    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL},
-    {"WebUI AP Only", SETTING_WEBUI_AP_ONLY, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL},
-    
-    {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
+
+    {"Web Auth", SETTING_WEB_AUTH, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"AP Enabled", SETTING_AP_ENABLED, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"WebUI AP Only", SETTING_WEBUI_AP_ONLY, bool_options, 2, 1, SETTINGS_CAT_NETWORK, false, NULL, SETTING_WIDGET_TOGGLE},
+
+    {"Power Saving Mode", SETTING_POWER_SAVE, bool_options, 2, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL, SETTING_WIDGET_TOGGLE},
 #if CONFIG_IDF_TARGET_ESP32S3
-    {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0, SETTINGS_CAT_POWER_SYSTEM, true, "CONFIG_IDF_TARGET_ESP32S3"},
+    {"USB Host Mode", SETTING_USB_HOST_MODE, bool_options, 2, 0, SETTINGS_CAT_POWER_SYSTEM, true, "CONFIG_IDF_TARGET_ESP32S3", SETTING_WIDGET_TOGGLE},
 #endif
-    {"Auto Save Scans", SETTING_AUTO_SAVE_SCANS, bool_options, 2, 1, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
-    {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
-    {"I2C Bus Scan", SETTING_I2C_SCAN, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
-    {"Export Settings SD", SETTING_EXPORT_SETTINGS_SD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
-    {"Import Settings SD", SETTING_IMPORT_SETTINGS_SD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
-    {"Factory Reset", SETTING_FACTORY_RESET, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL},
-    
-    {"Auto Upload", SETTING_WIGLE_AUTO_UPLOAD, bool_options, 2, 0, SETTINGS_CAT_WIGLE, false, NULL},
-    {"Donate Data", SETTING_WIGLE_DONATE, bool_options, 2, 1, SETTINGS_CAT_WIGLE, false, NULL},
-    {"Load Config from SD", SETTING_LOAD_CONFIG, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
-    {"Test API Key", SETTING_WIGLE_TEST_API, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
-    {"Help", SETTING_WIGLE_HELP, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
-    {"Manual Upload", SETTING_WIGLE_MANUAL_UPLOAD, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
-    {"View WiGLE Stats", SETTING_WIGLE_STATS, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL},
-    
+    {"Auto Save Scans", SETTING_AUTO_SAVE_SCANS, bool_options, 2, 1, SETTINGS_CAT_POWER_SYSTEM, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Run Setup Wizard", SETTING_RUN_SETUP_WIZARD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"I2C Bus Scan", SETTING_I2C_SCAN, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Export Settings SD", SETTING_EXPORT_SETTINGS_SD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Import Settings SD", SETTING_IMPORT_SETTINGS_SD, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Factory Reset", SETTING_FACTORY_RESET, action_options, 1, 0, SETTINGS_CAT_POWER_SYSTEM, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+
+    {"Auto Upload", SETTING_WIGLE_AUTO_UPLOAD, bool_options, 2, 0, SETTINGS_CAT_WIGLE, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Donate Data", SETTING_WIGLE_DONATE, bool_options, 2, 1, SETTINGS_CAT_WIGLE, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Load Config from SD", SETTING_LOAD_CONFIG, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Test API Key", SETTING_WIGLE_TEST_API, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Help", SETTING_WIGLE_HELP, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Manual Upload", SETTING_WIGLE_MANUAL_UPLOAD, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"View WiGLE Stats", SETTING_WIGLE_STATS, action_options, 1, 0, SETTINGS_CAT_WIGLE, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+
 #if defined(CONFIG_HAS_MIC) || defined(CONFIG_ENABLE_MIC_RGB_VISUALIZER)
-    {"Visualizer Mode", SETTING_MIC_VISUALIZER_MODE, mic_visualizer_mode_options, 6, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
-    {"Color Mode", SETTING_MIC_COLOR_MODE, mic_color_mode_options, 7, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
-    {"Sensitivity", SETTING_MIC_SENSITIVITY, mic_sensitivity_options, 10, 4, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
-    {"Smoothing", SETTING_MIC_SMOOTHING, mic_smoothing_options, 11, 3, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
-    {"Contrast", SETTING_MIC_CONTRAST, mic_contrast_options, 5, 1, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
-    {"Mirror Mode", SETTING_MIC_MIRROR_MODE, bool_options, 2, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
-    {"Calibrate", SETTING_MIC_CALIBRATE, action_options, 1, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER"},
+    {"Visualizer Mode", SETTING_MIC_VISUALIZER_MODE, mic_visualizer_mode_options, 6, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER", SETTING_WIDGET_VALUE_CYCLE},
+    {"Color Mode", SETTING_MIC_COLOR_MODE, mic_color_mode_options, 7, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER", SETTING_WIDGET_VALUE_CYCLE},
+    {"Sensitivity", SETTING_MIC_SENSITIVITY, mic_sensitivity_options, 10, 4, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER", SETTING_WIDGET_VALUE_CYCLE},
+    {"Smoothing", SETTING_MIC_SMOOTHING, mic_smoothing_options, 11, 3, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER", SETTING_WIDGET_VALUE_CYCLE},
+    {"Contrast", SETTING_MIC_CONTRAST, mic_contrast_options, 5, 1, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER", SETTING_WIDGET_VALUE_CYCLE},
+    {"Mirror Mode", SETTING_MIC_MIRROR_MODE, bool_options, 2, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER", SETTING_WIDGET_TOGGLE},
+    {"Calibrate", SETTING_MIC_CALIBRATE, action_options, 1, 0, SETTINGS_CAT_MIC_RGB, true, "CONFIG_HAS_MIC or CONFIG_ENABLE_MIC_RGB_VISUALIZER", SETTING_WIDGET_VALUE_CYCLE},
 #endif
-    {"Split Terminal", SETTING_GHOSTLINK_SPLIT_VIEW, bool_options, 2, 1, SETTINGS_CAT_GHOSTLINK, false, NULL},
-    {"Font Size", SETTING_FONT_SIZE, font_size_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
-    {"High Contrast", SETTING_HIGH_CONTRAST, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
-    {"Reduced Motion", SETTING_REDUCED_MOTION, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
-    {"Epilepsy Warning", SETTING_EPILEPSY_WARNING, bool_options, 2, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
-    {"Input Repeat Speed", SETTING_INPUT_REPEAT_SPEED, repeat_speed_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL},
+    {"Split Terminal", SETTING_GHOSTLINK_SPLIT_VIEW, bool_options, 2, 1, SETTINGS_CAT_GHOSTLINK, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Font Size", SETTING_FONT_SIZE, font_size_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"High Contrast", SETTING_HIGH_CONTRAST, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Reduced Motion", SETTING_REDUCED_MOTION, bool_options, 2, 0, SETTINGS_CAT_ACCESSIBILITY, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Epilepsy Warning", SETTING_EPILEPSY_WARNING, bool_options, 2, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Input Repeat Speed", SETTING_INPUT_REPEAT_SPEED, repeat_speed_options, 3, 1, SETTINGS_CAT_ACCESSIBILITY, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
 
-    {"Lockscreen", SETTING_LOCKSCREEN_ENABLED, bool_options, 2, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
-    {"Lock on Wake", SETTING_LOCKSCREEN_WAKE, bool_options, 2, 1, SETTINGS_CAT_LOCKSCREEN, false, NULL},
-    {"Auto-Lock", SETTING_LOCKSCREEN_TIMEOUT, lockscreen_timeout_options, 4, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
-    {"Set PIN", SETTING_LOCKSCREEN_CHANGE_PIN, action_options, 1, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Lockscreen", SETTING_LOCKSCREEN_ENABLED, bool_options, 2, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Lock on Wake", SETTING_LOCKSCREEN_WAKE, bool_options, 2, 1, SETTINGS_CAT_LOCKSCREEN, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Auto-Lock", SETTING_LOCKSCREEN_TIMEOUT, lockscreen_timeout_options, 4, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Set PIN", SETTING_LOCKSCREEN_CHANGE_PIN, action_options, 1, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
 
-    {"Primary Hop", SETTING_WD_HOP_PRIMARY, wd_hop_options, wd_hop_count, 2, SETTINGS_CAT_WARDRIVING, false, NULL},
-    {"Helper Hop", SETTING_WD_HOP_HELPER, wd_hop_options, wd_hop_count, 2, SETTINGS_CAT_WARDRIVING, false, NULL},
-    {"Weighted 5GHz", SETTING_WD_WEIGHTED_5G, bool_options, 2, 1, SETTINGS_CAT_WARDRIVING, false, NULL},
+    {"Primary Hop", SETTING_WD_HOP_PRIMARY, wd_hop_options, wd_hop_count, 2, SETTINGS_CAT_WARDRIVING, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Helper Hop", SETTING_WD_HOP_HELPER, wd_hop_options, wd_hop_count, 2, SETTINGS_CAT_WARDRIVING, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Weighted 5GHz", SETTING_WD_WEIGHTED_5G, bool_options, 2, 1, SETTINGS_CAT_WARDRIVING, false, NULL, SETTING_WIDGET_TOGGLE},
 };
 
 static const int settings_items_count = sizeof(settings_items) / sizeof(settings_items[0]);
@@ -1258,21 +1265,21 @@ static void sinkhole_detail_back_cb(lv_event_t *e) {
 
 static void update_settings_arrows_visibility(void) {
     if (!menu_container || !lv_obj_is_valid(menu_container)) return;
-    
+
     uint32_t child_count = lv_obj_get_child_cnt(menu_container);
     for (uint32_t i = 0; i < child_count; i++) {
         lv_obj_t *btn = lv_obj_get_child(menu_container, i);
         if (!btn || !lv_obj_is_valid(btn)) continue;
-        
+
         // Check if this is the selected item
         bool is_selected = (i == (uint32_t)selected_item_index);
-        
+
         // Iterate through all children to find arrows (user_data == 2)
         uint32_t btn_child_count = lv_obj_get_child_cnt(btn);
         for (uint32_t j = 0; j < btn_child_count; j++) {
-            lv_obj_t *child = lv_obj_get_child(btn, j);
+            lv_obj_t *child = lv_obj_get_child(btn, (int32_t)j);
             if (!child || !lv_obj_is_valid(child)) continue;
-            
+
             // Only affect arrows (marked with user_data == 2)
             if (lv_obj_get_user_data(child) == (void *)2) {
 #ifdef CONFIG_USE_TOUCHSCREEN
@@ -1312,7 +1319,7 @@ static void decorate_settings_row_with_arrows(lv_obj_t *btn) {
     const lv_font_t *font = (button_height_global <= 40) ? accessibility_get_font_body() : accessibility_get_font_title();
     lv_obj_set_style_text_font(left, font, 0);
     lv_obj_set_style_text_font(right, font, 0);
-    
+
     // Set arrow text color to white (will be adjusted by apply_selected_style for selected item)
     lv_obj_set_style_text_color(left, lv_color_hex(0xFFFFFF), 0);
     lv_obj_set_style_text_color(right, lv_color_hex(0xFFFFFF), 0);
@@ -1324,21 +1331,62 @@ static void decorate_settings_row_with_arrows(lv_obj_t *btn) {
     lv_obj_set_flex_grow(left, 0);
     lv_obj_set_flex_grow(right, 0);
     lv_obj_set_flex_grow(label, 1);
-    
+
     // Label should center its text
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(label, LV_SIZE_CONTENT);
 
-    // Always create arrows as visible - update_settings_arrows_visibility() 
+    // Always create arrows as visible - update_settings_arrows_visibility()
     // will hide them appropriately for non-touch devices
     lv_obj_clear_flag(left, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(right, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_move_to_index(left, 0);
     lv_obj_move_to_index(label, 1);
-    
+
     // Force layout update to ensure children are positioned correctly
     lv_obj_update_layout(btn);
+}
+
+// Find the iOS toggle child of a settings row, or NULL if the row uses arrows.
+static lv_obj_t *find_row_toggle(lv_obj_t *btn) {
+    if (!btn || !lv_obj_is_valid(btn)) return NULL;
+    uint32_t n = lv_obj_get_child_cnt(btn);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *child = lv_obj_get_child(btn, (int32_t)i);
+        if (child && lv_obj_get_user_data(child) == IOS_TOGGLE_USER_DATA) {
+            return child;
+        }
+    }
+    return NULL;
+}
+
+// Set up a settings row that displays a single label on the left and an
+// iOS-style toggle on the right. Skips the arrow decoration entirely.
+static void decorate_settings_row_with_toggle(lv_obj_t *btn, bool initial_value) {
+    if (!btn || !lv_obj_is_valid(btn)) return;
+
+    lv_obj_t *label = lv_obj_get_child(btn, 0);
+    if (!label) return;
+
+    lv_obj_t *toggle = ios_toggle_create(btn);
+
+    lv_obj_set_flex_flow(btn, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(btn, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_left(btn, GUI_SAFEAREA_HOR, 0);
+    lv_obj_set_style_pad_right(btn, GUI_SAFEAREA_HOR, 0);
+
+    // Label takes all remaining space and is left-aligned; toggle sits flush right.
+    lv_obj_set_flex_grow(label, 1);
+    lv_obj_set_flex_grow(toggle, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+    lv_obj_set_width(label, LV_SIZE_CONTENT);
+
+    // Set the value AFTER the row's flex is configured so the toggle's
+    // track width is finalized and the knob lands in the right place on
+    // the first frame.
+    lv_obj_update_layout(btn);
+    ios_toggle_set_value(toggle, initial_value, false);
 }
 
 // helper to show/hide touch scroll buttons based on list overflow
@@ -2565,37 +2613,49 @@ static void change_setting_value(int setting_index, bool increment) {
 #endif
     SettingsItem *item = &settings_items[setting_index];
     int new_value = item->current_value;
-    
-    if (increment) {
+
+    if (item->widget == SETTING_WIDGET_TOGGLE) {
+        // Flip 0 <-> 1 regardless of the `increment` argument.
+        new_value = (item->current_value == 0) ? 1 : 0;
+    } else if (increment) {
         new_value = (new_value + 1) % item->value_count;
     } else {
         new_value = (new_value + item->value_count - 1) % item->value_count;
     }
-    
+
     apply_setting_change(setting_index, new_value);
-    
+
     if (!menu_container) return;
-    
+
     lv_obj_t *current_item = lv_obj_get_child(menu_container, selected_item_index);
-    if (current_item) {
-        lv_obj_t *label = NULL;
-        uint32_t child_cnt = lv_obj_get_child_cnt(current_item);
-        for (uint32_t i = 0; i < child_cnt; ++i) {
-            lv_obj_t *child = lv_obj_get_child(current_item, (int32_t)i);
-            if (!child) continue;
-            if (lv_obj_get_user_data(child) == (void *)1) {
-                label = child;
-                break;
-            }
+    if (!current_item) return;
+
+    if (item->widget == SETTING_WIDGET_TOGGLE) {
+        // Update the toggle widget's visual state to match the new value.
+        lv_obj_t *toggle = find_row_toggle(current_item);
+        if (toggle) {
+            ios_toggle_set_value(toggle, new_value == 1, true);
         }
-        if (!label && child_cnt > 0) {
-            label = lv_obj_get_child(current_item, 0);
+        return;
+    }
+
+    lv_obj_t *label = NULL;
+    uint32_t child_cnt = lv_obj_get_child_cnt(current_item);
+    for (uint32_t i = 0; i < child_cnt; ++i) {
+        lv_obj_t *child = lv_obj_get_child(current_item, (int32_t)i);
+        if (!child) continue;
+        if (lv_obj_get_user_data(child) == (void *)1) {
+            label = child;
+            break;
         }
-        if (label) {
-            char buf[128];
-            snprintf(buf, sizeof(buf), "%s: %s", item->label, settings_item_value_text(item));
-            lv_label_set_text(label, buf);
-        }
+    }
+    if (!label && child_cnt > 0) {
+        label = lv_obj_get_child(current_item, 0);
+    }
+    if (label) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "%s: %s", item->label, settings_item_value_text(item));
+        lv_label_set_text(label, buf);
     }
 }
 
@@ -8728,13 +8788,24 @@ static void menu_builder_cb(lv_timer_t *t)
                     if (settings_items[i].category_id == category_id) {
                         if (current_item_in_category >= build_item_index) {
                             SettingsItem *item = &settings_items[i];
-                            char buf[128];
-                            snprintf(buf, sizeof(buf), "%s: %s", item->label, settings_item_value_text(item));
-                            lv_obj_t *btn = options_view_add_item(g_options_view, buf, option_event_cb, (void *)(intptr_t)i);
-                            if (!btn) break;
-                            lv_obj_set_user_data(btn, (void *)(intptr_t)i);
-                            lv_obj_set_height(btn, button_height_global);
-                            decorate_settings_row_with_arrows(btn);
+                            lv_obj_t *btn = NULL;
+                            if (item->widget == SETTING_WIDGET_TOGGLE) {
+                                // iOS-style toggle row: label on left, switch on right.
+                                btn = options_view_add_item(g_options_view, item->label, option_event_cb, (void *)(intptr_t)i);
+                                if (!btn) break;
+                                lv_obj_set_user_data(btn, (void *)(intptr_t)i);
+                                lv_obj_set_height(btn, button_height_global);
+                                decorate_settings_row_with_toggle(btn, item->current_value == 1);
+                            } else {
+                                // Classic cycle row: "Label: value" with left/right arrows.
+                                char buf[128];
+                                snprintf(buf, sizeof(buf), "%s: %s", item->label, settings_item_value_text(item));
+                                btn = options_view_add_item(g_options_view, buf, option_event_cb, (void *)(intptr_t)i);
+                                if (!btn) break;
+                                lv_obj_set_user_data(btn, (void *)(intptr_t)i);
+                                lv_obj_set_height(btn, button_height_global);
+                                decorate_settings_row_with_arrows(btn);
+                            }
                             num_items++;
                             built_this_tick++;
                             build_item_index++;
