@@ -452,6 +452,7 @@ typedef enum {
     SETTINGS_CAT_GHOSTLINK,
     SETTINGS_CAT_ACCESSIBILITY,
     SETTINGS_CAT_LOCKSCREEN,
+    SETTINGS_CAT_WARDRIVING,
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
@@ -482,6 +483,7 @@ static SettingsCategory settings_categories[] = {
     {"GhostLink", SETTINGS_CAT_GHOSTLINK, false, NULL},
     {"Accessibility", SETTINGS_CAT_ACCESSIBILITY, false, NULL},
     {"Lockscreen", SETTINGS_CAT_LOCKSCREEN, false, NULL},
+    {"Wardriving", SETTINGS_CAT_WARDRIVING, false, NULL},
 };
 
 static int current_settings_category = -1;
@@ -841,6 +843,12 @@ static const char * const font_size_options[] = {"Small", "Normal", "Large"};
 static const char * const repeat_speed_options[] = {"Slow", "Normal", "Fast"};
 static const char * const lockscreen_timeout_options[] = {"Off", "30s", "1m", "5m"};
 
+static const char * const wd_hop_options[] = {
+    "50ms", "75ms", "100ms", "125ms", "150ms", "175ms", "200ms", "250ms", "300ms", "400ms", "500ms"
+};
+static const uint16_t wd_hop_values[] = {50, 75, 100, 125, 150, 175, 200, 250, 300, 400, 500};
+static const int wd_hop_count = sizeof(wd_hop_values) / sizeof(wd_hop_values[0]);
+
 static const char * const brightness_options[] = {
     "10%", "20%", "30%", "40%", "50%", "60%", "70%", "80%", "90%", "100%"
 };
@@ -952,6 +960,10 @@ static SettingsItem settings_items[] = {
     {"Lock on Wake", SETTING_LOCKSCREEN_WAKE, bool_options, 2, 1, SETTINGS_CAT_LOCKSCREEN, false, NULL},
     {"Auto-Lock", SETTING_LOCKSCREEN_TIMEOUT, lockscreen_timeout_options, 4, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
     {"Set PIN", SETTING_LOCKSCREEN_CHANGE_PIN, action_options, 1, 0, SETTINGS_CAT_LOCKSCREEN, false, NULL},
+
+    {"Primary Hop", SETTING_WD_HOP_PRIMARY, wd_hop_options, wd_hop_count, 2, SETTINGS_CAT_WARDRIVING, false, NULL},
+    {"Helper Hop", SETTING_WD_HOP_HELPER, wd_hop_options, wd_hop_count, 2, SETTINGS_CAT_WARDRIVING, false, NULL},
+    {"Weighted 5GHz", SETTING_WD_WEIGHTED_5G, bool_options, 2, 1, SETTINGS_CAT_WARDRIVING, false, NULL},
 };
 
 static const int settings_items_count = sizeof(settings_items) / sizeof(settings_items[0]);
@@ -2038,6 +2050,27 @@ static void load_current_settings_values(void) {
             case SETTING_LOCKSCREEN_CHANGE_PIN:
                 settings_items[i].current_value = 0;
                 break;
+            case SETTING_WD_HOP_PRIMARY: {
+                uint16_t hp = settings_get_wd_hop_primary_ms(&G_Settings);
+                int idx = 2; // default 100ms
+                for (int j = 0; j < wd_hop_count; j++) {
+                    if (wd_hop_values[j] == hp) { idx = j; break; }
+                }
+                settings_items[i].current_value = idx;
+                break;
+            }
+            case SETTING_WD_HOP_HELPER: {
+                uint16_t hh = settings_get_wd_hop_helper_ms(&G_Settings);
+                int idx = 2; // default 100ms
+                for (int j = 0; j < wd_hop_count; j++) {
+                    if (wd_hop_values[j] == hh) { idx = j; break; }
+                }
+                settings_items[i].current_value = idx;
+                break;
+            }
+            case SETTING_WD_WEIGHTED_5G:
+                settings_items[i].current_value = settings_get_wd_weighted_5g(&G_Settings) ? 1 : 0;
+                break;
             default:
                 settings_items[i].current_value = 0;
                 break;
@@ -2475,6 +2508,19 @@ static void apply_setting_change(int setting_index, int new_value) {
             display_manager_switch_view(&lockscreen_view);
             return;
         }
+        case SETTING_WD_HOP_PRIMARY:
+            if (new_value >= 0 && new_value < wd_hop_count) {
+                settings_set_wd_hop_primary_ms(&G_Settings, wd_hop_values[new_value]);
+            }
+            break;
+        case SETTING_WD_HOP_HELPER:
+            if (new_value >= 0 && new_value < wd_hop_count) {
+                settings_set_wd_hop_helper_ms(&G_Settings, wd_hop_values[new_value]);
+            }
+            break;
+        case SETTING_WD_WEIGHTED_5G:
+            settings_set_wd_weighted_5g(&G_Settings, new_value == 1);
+            break;
     }
     
     // Save only the changed setting to NVS (Granular Save)

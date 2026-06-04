@@ -3833,6 +3833,10 @@ void handle_startwd(int argc, char **argv) {
     bool helper_mode = false;
     char helper_channels_csv[192] = {0};
     bool helper_channels_set = false;
+    uint16_t helper_hop_ms = 0;
+    bool helper_hop_set = false;
+    bool helper_weighted = false;
+    bool helper_weighted_set = false;
 
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-s") == 0) {
@@ -3849,6 +3853,19 @@ void handle_startwd(int argc, char **argv) {
         } else if (strncmp(argv[i], "--channels=", 11) == 0) {
             strncpy(helper_channels_csv, argv[i] + 11, sizeof(helper_channels_csv) - 1);
             helper_channels_set = true;
+        } else if (strcmp(argv[i], "--hop") == 0) {
+            if (i + 1 >= argc) {
+                glog("startwd: --hop requires a value (ms)\n");
+                return;
+            }
+            helper_hop_ms = (uint16_t)atoi(argv[++i]);
+            helper_hop_set = true;
+        } else if (strncmp(argv[i], "--hop=", 6) == 0) {
+            helper_hop_ms = (uint16_t)atoi(argv[i] + 6);
+            helper_hop_set = true;
+        } else if (strcmp(argv[i], "--weighted") == 0) {
+            helper_weighted = true;
+            helper_weighted_set = true;
         }
     }
 
@@ -3886,6 +3903,13 @@ void handle_startwd(int argc, char **argv) {
                 }
             } else {
                 (void)wardriving_set_helper_channels_from_csv(NULL);
+            }
+
+            if (helper_hop_set) {
+                wardriving_set_helper_hop_ms(helper_hop_ms);
+            }
+            if (helper_weighted_set) {
+                wardriving_set_helper_weighted_5g(helper_weighted);
             }
 
             if (!g_gpsManager.isinitilized) {
@@ -3930,8 +3954,14 @@ void handle_startwd(int argc, char **argv) {
             if (esp_comm_manager_is_connected()) {
                 char helper_args[256] = "--helper";
                 char helper_plan_csv[192] = {0};
+                uint16_t hop_ms = settings_get_wd_hop_helper_ms(&G_Settings);
+                bool weighted = settings_get_wd_weighted_5g(&G_Settings);
                 if (wardriving_get_helper_channel_plan_csv(helper_plan_csv, sizeof(helper_plan_csv))) {
-                    snprintf(helper_args, sizeof(helper_args), "--helper --channels %s", helper_plan_csv);
+                    snprintf(helper_args, sizeof(helper_args), "--helper --channels %s --hop %u%s",
+                             helper_plan_csv, (unsigned)hop_ms, weighted ? " --weighted" : "");
+                } else {
+                    snprintf(helper_args, sizeof(helper_args), "--helper --hop %u%s",
+                             (unsigned)hop_ms, weighted ? " --weighted" : "");
                 }
                 peer_helper_ok = esp_comm_manager_send_command("startwd", helper_args);
                 glog(peer_helper_ok
@@ -4533,7 +4563,7 @@ void handle_help(int argc, char **argv) {
         glog("\nGPS Commands:\n\n");
         glog("gpsinfo\n    Show GPS info.\n    Usage: gpsinfo [-s]\n\n");
         glog("gpspin\n    Set GPS RX pin for external GPS module.\n    Usage: gpspin <pin>\n\n");
-        glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [-s] [--helper] [--channels <csv>]\n\n");
+        glog("startwd\n    Start GPS wardriving.\n    Usage: startwd [-s] [--helper] [--channels <csv>] [--hop <ms>] [--weighted]\n\n");
         return;
     }
     if (strcmp(category, "wigle") == 0) {

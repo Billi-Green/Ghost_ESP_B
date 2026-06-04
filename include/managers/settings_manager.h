@@ -148,6 +148,10 @@ typedef enum {
     SETTING_LOCKSCREEN_TYPE,
     SETTING_LOCKSCREEN_TIMEOUT,
     SETTING_LOCKSCREEN_CHANGE_PIN,
+    // Wardriving settings
+    SETTING_WD_HOP_PRIMARY,
+    SETTING_WD_HOP_HELPER,
+    SETTING_WD_WEIGHTED_5G,
 } SettingsType;
 
 
@@ -294,6 +298,11 @@ typedef struct {
     char lockscreen_obfuscated[32]; // Length-prefixed obfuscated PIN blob
     uint16_t lockscreen_timeout_sec;   // Auto-lock after inactivity (0=off)
     bool lockscreen_wake_lock;        // Lock on wake-from-sleep
+
+    // Wardriving settings
+    uint16_t wd_hop_primary_ms;      // Primary chip hop interval (50-500ms)
+    uint16_t wd_hop_helper_ms;       // Helper chip hop interval (50-500ms)
+    bool wd_weighted_5g;             // Weighted 5GHz channel hopping
 } FSettings;
 
 // Function declarations
@@ -553,6 +562,14 @@ void settings_set_lockscreen_timeout_sec(FSettings *settings, uint16_t sec);
 uint16_t settings_get_lockscreen_timeout_sec(const FSettings *settings);
 void settings_set_lockscreen_wake_lock(FSettings *settings, bool enabled);
 bool settings_get_lockscreen_wake_lock(const FSettings *settings);
+
+// Wardriving settings
+void settings_set_wd_hop_primary_ms(FSettings *settings, uint16_t ms);
+uint16_t settings_get_wd_hop_primary_ms(const FSettings *settings);
+void settings_set_wd_hop_helper_ms(FSettings *settings, uint16_t ms);
+uint16_t settings_get_wd_hop_helper_ms(const FSettings *settings);
+void settings_set_wd_weighted_5g(FSettings *settings, bool enabled);
+bool settings_get_wd_weighted_5g(const FSettings *settings);
 
 extern FSettings G_Settings;
 

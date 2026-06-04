@@ -43,6 +43,8 @@ bool wardriving_is_helper_mode(void);
 void wardriving_register_stream_handler(void);
 bool wardriving_get_helper_channel_plan_csv(char *out, size_t out_len);
 bool wardriving_set_helper_channels_from_csv(const char *csv);
+void wardriving_set_helper_hop_ms(uint16_t ms);
+void wardriving_set_helper_weighted_5g(bool enabled);
 
 uint32_t wardriving_get_ap_count(void);
 

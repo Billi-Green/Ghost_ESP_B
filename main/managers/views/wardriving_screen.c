@@ -581,8 +581,14 @@ void wardriving_view_create(void) {
         if (esp_comm_manager_is_connected()) {
             char helper_args[256] = "--helper";
             char helper_plan_csv[192] = {0};
+            uint16_t hop_ms = settings_get_wd_hop_helper_ms(&G_Settings);
+            bool weighted = settings_get_wd_weighted_5g(&G_Settings);
             if (wardriving_get_helper_channel_plan_csv(helper_plan_csv, sizeof(helper_plan_csv))) {
-                snprintf(helper_args, sizeof(helper_args), "--helper --channels %s", helper_plan_csv);
+                snprintf(helper_args, sizeof(helper_args), "--helper --channels %s --hop %u%s",
+                         helper_plan_csv, (unsigned)hop_ms, weighted ? " --weighted" : "");
+            } else {
+                snprintf(helper_args, sizeof(helper_args), "--helper --hop %u%s",
+                         (unsigned)hop_ms, weighted ? " --weighted" : "");
             }
             peer_helper_ok = esp_comm_manager_send_command("startwd", helper_args);
             glog(peer_helper_ok

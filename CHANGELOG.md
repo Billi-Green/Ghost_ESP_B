@@ -9,6 +9,7 @@
  - Added Ghostchi activity counters to state file (BLE scans, wardriving, GPS fixes, deauths, aerial detections, PCAP saves, etc.)
  - Adjusted Ghostchi character positioning on small screens to avoid status bar overlap
  - Updated Ghostchi docs with full XP source table and corrected quick start path
+ - Added Wardriving settings for per-chip hop intervals and weighted 5GHz channel hopping, synced over GhostLink
 
 ## Revival v2.0-pre3
 

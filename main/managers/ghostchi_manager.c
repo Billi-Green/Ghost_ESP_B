@@ -129,6 +129,7 @@ static uint32_t s_total_aerial_detections = 0;
 static uint32_t s_total_gps_fixes = 0;
 static uint32_t s_total_pcaps_saved = 0;
 static uint32_t s_total_new_aps_learned = 0;
+static uint32_t s_xp_save_deadline_ms = 0;
 static ghostchi_strategy_t s_active_strategy;
 static ghostchi_target_t s_current_target;
 static bool s_pcap_capture_enabled = false;
@@ -1002,6 +1003,13 @@ void ghostchi_manager_add_xp(uint32_t amount) {
         char buf[32];
         snprintf(buf, sizeof(buf), "Level %u!", new_level);
         toast_show(buf, TOAST_SUCCESS);
+    }
+    if (s_storage_ready && s_xp_save_deadline_ms == 0) {
+        s_xp_save_deadline_ms = now_ms() + 30000u;
+    }
+    if (s_storage_ready && s_xp_save_deadline_ms != 0 && now_ms() >= s_xp_save_deadline_ms) {
+        s_xp_save_deadline_ms = 0;
+        save_state();
     }
 }
 

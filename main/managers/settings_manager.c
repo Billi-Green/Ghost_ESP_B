@@ -111,6 +111,11 @@ static const char *NVS_LOCKSCREEN_OBF_KEY = "ls_obf";
 static const char *NVS_LOCKSCREEN_TIMEOUT_KEY = "ls_tout";
 static const char *NVS_LOCKSCREEN_WAKE_KEY = "ls_wake";
 
+// Wardriving NVS keys
+static const char *NVS_WD_HOP_PRIMARY_KEY = "wd_hop_prim";
+static const char *NVS_WD_HOP_HELPER_KEY = "wd_hop_help";
+static const char *NVS_WD_WEIGHTED_5G_KEY = "wd_w5g";
+
 static const char *TAG = "SettingsManager";
 
 static nvs_handle_t nvsHandle;
@@ -234,6 +239,11 @@ void settings_set_defaults(FSettings *settings) {
   settings->high_contrast = false;
   settings->menu_item_borders = false;
   settings->touch_drag_scroll = true;
+
+  // Wardriving defaults
+  settings->wd_hop_primary_ms = 100;
+  settings->wd_hop_helper_ms = 100;
+  settings->wd_weighted_5g = true;
 
   // Lockscreen defaults (disabled by default)
   settings->lockscreen_enabled = false;
@@ -796,6 +806,21 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->lockscreen_wake_lock = (bool)value_u8;
   }
+
+  // Load wardriving settings
+  uint16_t value_u16_wd = 0;
+  err = nvs_get_u16(nvsHandle, NVS_WD_HOP_PRIMARY_KEY, &value_u16_wd);
+  if (err == ESP_OK) {
+    settings->wd_hop_primary_ms = value_u16_wd;
+  }
+  err = nvs_get_u16(nvsHandle, NVS_WD_HOP_HELPER_KEY, &value_u16_wd);
+  if (err == ESP_OK) {
+    settings->wd_hop_helper_ms = value_u16_wd;
+  }
+  err = nvs_get_u8(nvsHandle, NVS_WD_WEIGHTED_5G_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->wd_weighted_5g = (bool)value_u8;
+  }
 }
 
 static void update_rainbow_effect(const FSettings *settings) {
@@ -1109,6 +1134,18 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_blob(nvsHandle, NVS_LOCKSCREEN_OBF_KEY, G_Settings.lockscreen_obfuscated, sizeof(G_Settings.lockscreen_obfuscated));
             key = NVS_LOCKSCREEN_OBF_KEY;
             break;
+        case SETTING_WD_HOP_PRIMARY:
+            err = nvs_set_u16(nvsHandle, NVS_WD_HOP_PRIMARY_KEY, G_Settings.wd_hop_primary_ms);
+            key = NVS_WD_HOP_PRIMARY_KEY;
+            break;
+        case SETTING_WD_HOP_HELPER:
+            err = nvs_set_u16(nvsHandle, NVS_WD_HOP_HELPER_KEY, G_Settings.wd_hop_helper_ms);
+            key = NVS_WD_HOP_HELPER_KEY;
+            break;
+        case SETTING_WD_WEIGHTED_5G:
+            err = nvs_set_u8(nvsHandle, NVS_WD_WEIGHTED_5G_KEY, G_Settings.wd_weighted_5g ? 1 : 0);
+            key = NVS_WD_WEIGHTED_5G_KEY;
+            break;
         default:
             ESP_LOGW(TAG, "Unknown setting type to persist: %d", setting);
             return;
@@ -1294,6 +1331,11 @@ void settings_save(const FSettings *settings) {
     nvs_set_blob(nvsHandle, NVS_LOCKSCREEN_OBF_KEY, settings->lockscreen_obfuscated, sizeof(settings->lockscreen_obfuscated));
     nvs_set_u16(nvsHandle, NVS_LOCKSCREEN_TIMEOUT_KEY, settings->lockscreen_timeout_sec);
     nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_WAKE_KEY, settings->lockscreen_wake_lock ? 1 : 0);
+
+    // Save wardriving settings
+    nvs_set_u16(nvsHandle, NVS_WD_HOP_PRIMARY_KEY, settings->wd_hop_primary_ms);
+    nvs_set_u16(nvsHandle, NVS_WD_HOP_HELPER_KEY, settings->wd_hop_helper_ms);
+    nvs_set_u8(nvsHandle, NVS_WD_WEIGHTED_5G_KEY, settings->wd_weighted_5g ? 1 : 0);
 
     esp_err_t err = nvs_commit(nvsHandle);
     if (err != ESP_OK) {
@@ -2047,4 +2089,28 @@ void settings_set_lockscreen_wake_lock(FSettings *settings, bool enabled) {
 }
 bool settings_get_lockscreen_wake_lock(const FSettings *settings) {
   return settings ? settings->lockscreen_wake_lock : true;
+}
+
+// Wardriving settings
+void settings_set_wd_hop_primary_ms(FSettings *settings, uint16_t ms) {
+  if (ms < 50) ms = 50;
+  if (ms > 500) ms = 500;
+  if (settings) settings->wd_hop_primary_ms = ms;
+}
+uint16_t settings_get_wd_hop_primary_ms(const FSettings *settings) {
+  return settings ? settings->wd_hop_primary_ms : 100;
+}
+void settings_set_wd_hop_helper_ms(FSettings *settings, uint16_t ms) {
+  if (ms < 50) ms = 50;
+  if (ms > 500) ms = 500;
+  if (settings) settings->wd_hop_helper_ms = ms;
+}
+uint16_t settings_get_wd_hop_helper_ms(const FSettings *settings) {
+  return settings ? settings->wd_hop_helper_ms : 100;
+}
+void settings_set_wd_weighted_5g(FSettings *settings, bool enabled) {
+  if (settings) settings->wd_weighted_5g = enabled;
+}
+bool settings_get_wd_weighted_5g(const FSettings *settings) {
+  return settings ? settings->wd_weighted_5g : true;
 }
