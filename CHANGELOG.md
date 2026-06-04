@@ -15,6 +15,14 @@
  - Slimmed and rounded the terminal's bottom touch controls to match the rest of the UI
  - Themed the terminal's input bar and back button via the palette instead of hardcoded colors
  - Cached the DualComm line check per row to keep the split-view terminal smooth
+ - Fixed `help` (no args) printing the category list twice
+ - Fixed duplicate `powerprinter` entry in `help printer`
+ - Fixed `chameleon` (no args) double-printing its help on the on-screen terminal
+ - Fixed `select -a 1,2,3` corrupting later `select` calls by switching to a re-entrant, non-mutating tokenizer
+ - Stopped logging unknown commands to command history so typos no longer pollute arrow-up
+ - Added per-subsystem progress logging to the `stop` command
+ - Made command lookup case-insensitive (`SCANAP` now works)
+ - Reduced `sd tree` walker memory from ~16 KB to ~600 B (no BSS) and made it work on devices without PSRAM
 
 ## Revival v2.0-pre3
 

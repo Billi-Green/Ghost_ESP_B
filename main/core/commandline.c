@@ -327,7 +327,7 @@ void unregister_command(const char *name) {
 CommandFunction find_command(const char *name) {
     Command *current = command_list_head;
     while (current != NULL) {
-        if (strcmp(current->name, name) == 0) {
+        if (strcasecmp(current->name, name) == 0) {
             return current->function;
         }
         current = current->next;
@@ -807,9 +807,9 @@ void handle_select_cmd(int argc, char **argv) {
     }
 
     if (strcmp(argv[1], "-a") == 0) {
-        char *input = argv[2];
-        char *comma = strchr(input, ',');
-        
+        const char *input = argv[2];
+        const char *comma = strchr(input, ',');
+
         if (comma == NULL) {
             char *endptr;
             int num = (int)strtol(input, &endptr, 10);
@@ -821,8 +821,17 @@ void handle_select_cmd(int argc, char **argv) {
         } else {
             int indices[32];
             int count = 0;
-            char *token = strtok(input, ",");
-            
+            char buf[128];
+            size_t in_len = strlen(input);
+            if (in_len >= sizeof(buf)) {
+                glog("Error: index list too long.\n");
+                return;
+            }
+            memcpy(buf, input, in_len + 1);
+
+            char *saveptr = NULL;
+            char *token = strtok_r(buf, ",", &saveptr);
+
             while (token != NULL && count < 32) {
                 char *endptr;
                 int num = (int)strtol(token, &endptr, 10);
@@ -832,14 +841,14 @@ void handle_select_cmd(int argc, char **argv) {
                     glog("Error: '%s' is not a valid number.\n", token);
                     return;
                 }
-                token = strtok(NULL, ",");
+                token = strtok_r(NULL, ",", &saveptr);
             }
 
             if (token != NULL) {
                 glog("Error: too many indices (max 32).\n");
                 return;
             }
-            
+
             if (count > 0) {
                 wifi_manager_select_multiple_aps(indices, count);
             } else {
@@ -904,65 +913,84 @@ static volatile bool g_eth_scan_cancel = false;
 #endif
 
 void handle_stop_flipper(int argc, char **argv) {
+    glog("[stop] stopping all activities...\n");
+
 #ifdef CONFIG_ENABLE_MIC_RGB_VISUALIZER
     rgb_manager_set_mic_stream_suspended(true);
 #endif
 
 #ifdef CONFIG_HAS_MIC
     bool restart_mic_visualizer = mic_visualizer_is_running();
+    if (restart_mic_visualizer) {
+        glog("[stop] mic visualizer\n");
+    }
     mic_visualizer_stop();
 #endif
 
     if (g_ir_universal_send_task != NULL) {
+        glog("[stop] IR universal send\n");
         g_ir_universal_send_cancel = true;
     }
 
+    glog("[stop] wardriving\n");
     stop_wardriving();
     if (!esp_comm_manager_is_remote_command()) {
         if (esp_comm_manager_is_connected()) {
             bool peer_stop_ok = esp_comm_manager_send_command("startwd", "-s --helper");
             glog(peer_stop_ok
-                     ? "Wardrive helper stop sent to peer.\n"
-                     : "Wardrive helper stop could not be sent to peer.\n");
+                     ? "[stop] wardrive helper stop sent to peer\n"
+                     : "[stop] wardrive helper stop could not be sent to peer\n");
         }
         wardriving_set_peer_assist(false);
     }
+
+    glog("[stop] WiFi: deauth, channel switch, connect cancel\n");
     wifi_manager_stop_deauth();
     wifi_manager_stop_channel_switch_attack();
     wifi_manager_cancel_connect();
+
 #ifndef CONFIG_IDF_TARGET_ESP32S2
+    glog("[stop] BLE: spam, gatt, scan\n");
     ble_spam_stop();
     ble_stop_gatt_scan();
     ble_stop();
 #endif
+
     if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
+        glog("[stop] flushing CSV buffer\n");
         csv_flush_buffer_to_file();
     }
+    glog("[stop] closing CSV/PCAP\n");
     csv_file_close();                  // Close any open CSV files
+    glog("[stop] GPS deinit\n");
     gps_manager_deinit(&g_gpsManager); // Clean up GPS if active
 
     // stop aerial operations
-    if (aerial_detector_is_scanning()) {
-        aerial_detector_stop_scan();
-    }
-    if (aerial_detector_is_emulating()) {
-        aerial_detector_stop_emulation();
+    if (aerial_detector_is_scanning() || aerial_detector_is_emulating()) {
+        glog("[stop] aerial: scan, emulate, untrack\n");
+        if (aerial_detector_is_scanning()) {
+            aerial_detector_stop_scan();
+        }
+        if (aerial_detector_is_emulating()) {
+            aerial_detector_stop_emulation();
+        }
     }
     aerial_detector_untrack_device();
 
     // stop flock detector if running
     if (flock_detector_is_running()) {
+        glog("[stop] flock detector\n");
         flock_detector_stop();
     }
 
-    // also stop any in-progress IR RX (ir rx / ir learn)
+    // also stop any in-progress IR RX (ir rx / ir learn) and dazzler
+    glog("[stop] IR: rx cancel, dazzler\n");
     infrared_manager_rx_cancel();
-
-    // stop IR dazzler if running
     infrared_manager_dazzler_stop();
 
     // also stop the gps info display task if it is running
     if (gps_info_task_handle != NULL) {
+        glog("[stop] GPS info display task\n");
         vTaskDelete(gps_info_task_handle);
         gps_info_task_handle = NULL;
 
@@ -977,6 +1005,7 @@ void handle_stop_flipper(int argc, char **argv) {
         }
     }
 
+    glog("[stop] WiFi: monitor, deauth-station, dhcp-starve, eapol, sae, karma, evil-portal\n");
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
     wifi_manager_stop_deauth_station();
     wifi_manager_stop_deauth();
@@ -985,19 +1014,30 @@ void handle_stop_flipper(int argc, char **argv) {
     wifi_manager_stop_sae_flood();
     wifi_manager_stop_karma();            // stop karma attack (sets flag; task self-exits)
     wifi_manager_stop_evil_portal();  // stop evil portal and flush credentials
+
     {
         dns_server_handle_t h = dns_handle_take();
-        if (h) stop_dns_server(h);
+        if (h) {
+            glog("[stop] DNS sinkhole\n");
+            stop_dns_server(h);
+        }
     }
+
+    glog("[stop] WiFi: tracking, beacon\n");
     wifi_manager_stop_tracking();  // stop ap/sta rssi tracking
     wifi_manager_stop_beacon();  // stop beacon spam
+
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     // ensure zigbee capture is stopped when using generic stop
+    glog("[stop] zigbee capture\n");
     zigbee_manager_stop_capture();
 #endif
 #ifdef CONFIG_WITH_ETHERNET
     g_eth_scan_cancel = true;
-    if (eth_arp_poison_is_running()) eth_arp_poison_stop();
+    if (eth_arp_poison_is_running()) {
+        glog("[stop] Ethernet ARP poison\n");
+        eth_arp_poison_stop();
+    }
 #endif
     // ensure pcap is properly flushed and closed
     pcap_file_close();
@@ -1005,12 +1045,15 @@ void handle_stop_flipper(int argc, char **argv) {
     status_display_show_status("All Stopped");
 
     // reconnect to saved WiFi if credentials exist
+    glog("[stop] reconnecting WiFi STA from saved settings\n");
     wifi_manager_configure_sta_from_settings();
 
     // kill any feature tasks we spawned that may still be around
     if (VisualizerHandle != NULL) {
+        glog("[stop] WiFi visualizer\n");
         wifi_manager_stop_visualizer();
     }
+    glog("[stop] restarting RGB effect from settings\n");
     settings_restart_rgb_effect();
 
 #ifdef CONFIG_HAS_MIC
@@ -4610,10 +4653,7 @@ void handle_help(int argc, char **argv) {
         glog("powerprinter\n");
         glog("    Description: Print Custom Text to a Printer on your LAN (Requires You to Run Connect First)\n");
         glog("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n");
-        glog("    aligment options: CM = Center Middle, TL = Top Left, TR = Top Right, BR = Bottom Right, BL = Bottom Left\n\n");
-        glog("powerprinter\n");
-        glog("    Print custom text to a network printer.\n");
-        glog("    Usage: powerprinter <Printer IP> <Text> <FontSize> <alignment>\n\n");
+        glog("    alignment options: CM = Center Middle, TL = Top Left, TR = Top Right, BR = Bottom Right, BL = Bottom Left\n\n");
         return;
     }
 
@@ -4911,35 +4951,9 @@ void handle_help(int argc, char **argv) {
     glog("  help camera    - Camera & motion detection commands\n");
 #endif
 #ifdef CONFIG_WITH_ETHERNET
-    printf("  help ethernet  - Ethernet commands\n");
+    glog("  help ethernet  - Ethernet commands\n");
 #endif
-    glog("  help all      - All commands\n\n");
-
-    glog(
-        "  help wifi      - Wi-Fi commands\n"
-        "  help ble       - Bluetooth/BLE commands\n"
-        "  help comm      - ESP32 communication commands\n"
-        "  help sd        - SD card commands\n"
-        "  help led       - LED/RGB commands\n"
-        "  help gps       - GPS commands\n"
-        "  help wigle     - WiGLE commands\n"
-        "  help misc      - Miscellaneous commands\n");
-    glog("  help portal    - Evil Portal commands\n"
-         "  help printer   - Printer commands\n"
-         "  help cast      - YouTube cast commands\n"
-         "  help capture   - Wi-Fi packet capture commands\n"
-         "  help beacon    - Beacon spam commands\n"
-         "  help attack    - Attack/flood commands\n"
-#ifdef CONFIG_HAS_INFRARED
-         "  help ir        - Infrared commands\n"
-#endif
-#ifdef CONFIG_HAS_CAMERA
-         "  help camera    - Camera & motion detection commands\n"
-#endif
-#ifdef CONFIG_WITH_ETHERNET
-         "  help ethernet  - Ethernet commands\n"
-#endif
-         "  help all      - All commands\n\n");
+    glog("  help all       - All commands\n\n");
 
     glog("Type 'help <category>' for details on that category.\n\n");
 }
@@ -6139,15 +6153,26 @@ void handle_sd_cmd(int argc, char **argv) {
         }
 
         glog("SD:TREE:%s\n", path);
-        
-        typedef struct { char p[256]; int lvl; } stack_item_t;
-        stack_item_t *stack = spiram_malloc(sizeof(stack_item_t) * 64);
+
+        /* Pack a directory path and its level into one heap block per stack
+         * slot. We only ever need max_depth+1 slots (current dir + each
+         * nested level), and the path buffer can be smaller than 256 since
+         * paths deeper than ~200 chars are not realistic for a handheld
+         * device's SD card. Path lives inline; lvl is a single byte. */
+        typedef struct {
+            char p[192];
+            uint8_t lvl;
+        } stack_item_t;
+
+        size_t stack_cap = (size_t)max_depth + 1;
+        stack_item_t *stack = malloc(stack_cap * sizeof(stack_item_t));
         if (!stack) {
             glog("SD:ERR:oom\n");
             return;
         }
         int sp = 0;
-        strncpy(stack[sp].p, path, 255);
+        strncpy(stack[sp].p, path, sizeof(stack[sp].p) - 1);
+        stack[sp].p[sizeof(stack[sp].p) - 1] = '\0';
         stack[sp].lvl = 0;
         sp++;
 
@@ -6164,6 +6189,9 @@ void handle_sd_cmd(int argc, char **argv) {
             while ((entry = readdir(d)) != NULL && count < 500) {
                 if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
 
+                /* full must be at least sizeof(stack_item_t.p) + 1 + NAME_MAX
+                 * to safely format cur + "/" + entry->d_name without -Wformat-truncation
+                 * tripping on the compiler. 512 is plenty (192 + 1 + 255). */
                 char full[512];
                 snprintf(full, sizeof(full), "%s/%s", cur, entry->d_name);
 
@@ -6178,9 +6206,10 @@ void handle_sd_cmd(int argc, char **argv) {
                 for (int i = 0; i < lvl; i++) printf("  ");
                 if (is_dir) {
                     printf("[D] %s/\n", entry->d_name);
-                    if (lvl + 1 < max_depth && sp < 63) {
-                        strncpy(stack[sp].p, full, 255);
-                        stack[sp].lvl = lvl + 1;
+                    if (lvl + 1 < max_depth && (size_t)sp < stack_cap) {
+                        strncpy(stack[sp].p, full, sizeof(stack[sp].p) - 1);
+                        stack[sp].p[sizeof(stack[sp].p) - 1] = '\0';
+                        stack[sp].lvl = (uint8_t)(lvl + 1);
                         sp++;
                     }
                 } else {
@@ -7518,72 +7547,39 @@ void handle_settings_cmd(int argc, char **argv) {
 #ifdef CONFIG_NFC_CHAMELEON
 void handle_chameleon_cmd(int argc, char **argv) {
     if (argc < 2) {
-        printf("Usage: chameleon <command>\n");
-        printf("Commands:\n");
-        printf("Connection:\n");
-        printf("  connect [timeout] [pin] - Connect to Chameleon Ultra (default timeout: 10s)\n");
-        printf("  disconnect        - Disconnect from Chameleon Ultra\n");
-        printf("  status           - Check connection status\n");
-        printf("Device Info:\n");
-        printf("  firmware         - Get firmware version\n");
-        printf("  devicemode       - Get current device mode\n");
-        printf("  activeslot       - Get active slot number\n");
-        printf("  setslot <1-8>    - Set active slot number\n");
-        printf("  slotinfo <1-8>   - Get slot information\n");
-        printf("  battery          - Get battery information\n");
-        printf("Scanning:\n");
-        printf("  scanhf           - Scan for HF tags\n");
-        printf("  scanlf           - Scan for LF EM410X tags\n");
-        printf("  scanlfall        - Scan for all LF tag types\n");
-        printf("  scanhidprox      - Scan for HID Prox tags\n");
-        printf("MIFARE Classic:\n");
-        printf("  mfdetect         - Detect MIFARE Classic support\n");
-        printf("  mfprng           - Detect MIFARE Classic PRNG type\n");
-        printf("NTAG Cards:\n");
-        printf("  ntagdetect       - Detect and identify NTAG card type\n");
-        printf("  ntagdump         - Dump complete NTAG card data\n");
-        printf("  saventag [filename] - Save NTAG dump to SD card\n");
-        printf("Mode Control:\n");
-        printf("  reader           - Set to reader mode\n");
-        printf("  emulator         - Set to emulator mode\n");
-        printf("Data Management:\n");
-        printf("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
-        printf("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
-        printf("  readhf           - Basic MIFARE Classic card detection and information collection\n");
-        printf("  savedump [filename] - Save last card dump to SD card\n");
-        TERMINAL_VIEW_ADD_TEXT("Usage: chameleon <command>\n");
-        TERMINAL_VIEW_ADD_TEXT("Commands:\n");
-        TERMINAL_VIEW_ADD_TEXT("Connection:\n");
-        TERMINAL_VIEW_ADD_TEXT("  connect [timeout] [pin] - Connect to Chameleon Ultra (default timeout: 10s)\n");
-        TERMINAL_VIEW_ADD_TEXT("  disconnect        - Disconnect from Chameleon Ultra\n");
-        TERMINAL_VIEW_ADD_TEXT("  status           - Check connection status\n");
-        TERMINAL_VIEW_ADD_TEXT("Device Info:\n");
-        TERMINAL_VIEW_ADD_TEXT("  firmware         - Get firmware version\n");
-        TERMINAL_VIEW_ADD_TEXT("  devicemode       - Get current device mode\n");
-        TERMINAL_VIEW_ADD_TEXT("  activeslot       - Get active slot number\n");
-        TERMINAL_VIEW_ADD_TEXT("  setslot <1-8>    - Set active slot number\n");
-        TERMINAL_VIEW_ADD_TEXT("  slotinfo <1-8>   - Get slot information\n");
-        TERMINAL_VIEW_ADD_TEXT("  battery          - Get battery information\n");
-        TERMINAL_VIEW_ADD_TEXT("Scanning:\n");
-        TERMINAL_VIEW_ADD_TEXT("  scanhf           - Scan for HF tags\n");
-        TERMINAL_VIEW_ADD_TEXT("  scanlf           - Scan for LF EM410X tags\n");
-        TERMINAL_VIEW_ADD_TEXT("  scanlfall        - Scan for all LF tag types\n");
-        TERMINAL_VIEW_ADD_TEXT("  scanhidprox      - Scan for HID Prox tags\n");
-        TERMINAL_VIEW_ADD_TEXT("MIFARE Classic:\n");
-        TERMINAL_VIEW_ADD_TEXT("  mfdetect         - Detect MIFARE Classic support\n");
-        TERMINAL_VIEW_ADD_TEXT("  mfprng           - Detect MIFARE Classic PRNG type\n");
-        TERMINAL_VIEW_ADD_TEXT("NTAG Cards:\n");
-        TERMINAL_VIEW_ADD_TEXT("  ntagdetect       - Detect and identify NTAG card type\n");
-        TERMINAL_VIEW_ADD_TEXT("  ntagdump         - Dump complete NTAG card data\n");
-        TERMINAL_VIEW_ADD_TEXT("  saventag [filename] - Save NTAG dump to SD card\n");
-        TERMINAL_VIEW_ADD_TEXT("Mode Control:\n");
-        TERMINAL_VIEW_ADD_TEXT("  reader           - Set to reader mode\n");
-        TERMINAL_VIEW_ADD_TEXT("  emulator         - Set to emulator mode\n");
-        TERMINAL_VIEW_ADD_TEXT("Data Management:\n");
-        TERMINAL_VIEW_ADD_TEXT("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
-        TERMINAL_VIEW_ADD_TEXT("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
-        TERMINAL_VIEW_ADD_TEXT("  readhf           - Basic MIFARE Classic card detection and information collection\n");
-        TERMINAL_VIEW_ADD_TEXT("  savedump [filename] - Save last card dump to SD card\n");
+        glog("Usage: chameleon <command>\n");
+        glog("Commands:\n");
+        glog("Connection:\n");
+        glog("  connect [timeout] [pin] - Connect to Chameleon Ultra (default timeout: 10s)\n");
+        glog("  disconnect        - Disconnect from Chameleon Ultra\n");
+        glog("  status           - Check connection status\n");
+        glog("Device Info:\n");
+        glog("  firmware         - Get firmware version\n");
+        glog("  devicemode       - Get current device mode\n");
+        glog("  activeslot       - Get active slot number\n");
+        glog("  setslot <1-8>    - Set active slot number\n");
+        glog("  slotinfo <1-8>   - Get slot information\n");
+        glog("  battery          - Get battery information\n");
+        glog("Scanning:\n");
+        glog("  scanhf           - Scan for HF tags\n");
+        glog("  scanlf           - Scan for LF EM410X tags\n");
+        glog("  scanlfall        - Scan for all LF tag types\n");
+        glog("  scanhidprox      - Scan for HID Prox tags\n");
+        glog("MIFARE Classic:\n");
+        glog("  mfdetect         - Detect MIFARE Classic support\n");
+        glog("  mfprng           - Detect MIFARE Classic PRNG type\n");
+        glog("NTAG Cards:\n");
+        glog("  ntagdetect       - Detect and identify NTAG card type\n");
+        glog("  ntagdump         - Dump complete NTAG card data\n");
+        glog("  saventag [filename] - Save NTAG dump to SD card\n");
+        glog("Mode Control:\n");
+        glog("  reader           - Set to reader mode\n");
+        glog("  emulator         - Set to emulator mode\n");
+        glog("Data Management:\n");
+        glog("  savehf [filename] - Save last HF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        glog("  savelf [filename] - Save last LF scan to SD card (/mnt/ghostesp/chameleon/)\n");
+        glog("  readhf           - Basic MIFARE Classic card detection and information collection\n");
+        glog("  savedump [filename] - Save last card dump to SD card\n");
         return;
     }
 

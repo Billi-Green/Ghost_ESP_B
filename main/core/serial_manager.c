@@ -1064,8 +1064,7 @@ int handle_serial_command(const char *input) {
     cmd_func(argc, argv);
     return ESP_OK;
   } else {
-    // Add command to history even if unknown
-    command_history_add(input);
+    // Don't pollute history with typos and unknown commands
     handle_unknown_command(argv[0]);
     return ESP_ERR_INVALID_ARG;
   }
