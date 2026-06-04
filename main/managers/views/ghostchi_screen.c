@@ -43,7 +43,11 @@ typedef struct {
 } ghostchi_progress_t;
 
 static const unsigned int s_ghostchi_level_xp[] = {
-    0, 18, 48, 92, 152, 230, 328, 448, 592, 762, 960
+    0, 10, 40, 90, 160, 250, 360, 490, 640, 810, 1000,
+    1210, 1440, 1690, 1960, 2250, 2560, 2890, 3240, 3610, 4000,
+    4410, 4840, 5290, 5760, 6250, 6760, 7290, 7840, 8410, 9000,
+    9610, 10240, 10890, 11560, 12250, 12960, 13690, 14440, 15210, 16000,
+    16810, 17640, 18490, 19360, 20250, 21160, 22090, 23040, 24010, 25000
 };
 
 static void generate_ghostchi_name(char *buf, size_t buf_len) {
@@ -77,21 +81,7 @@ static void generate_ghostchi_name(char *buf, size_t buf_len) {
     capitalize_ascii_first(buf);
 }
 
-static unsigned int ghostchi_effective_captures(const ghostchi_snapshot_t *snap) {
-    unsigned int handshakes;
-    unsigned int attempts;
-
-    if (!snap) return 0;
-    handshakes = (unsigned int)snap->handshakes;
-    attempts = (unsigned int)snap->attempts;
-    if (attempts == 0) return handshakes;
-    return handshakes < attempts ? handshakes : attempts;
-}
-
 static void ghostchi_get_progress(const ghostchi_snapshot_t *snap, ghostchi_progress_t *out) {
-    unsigned int sessions;
-    unsigned int attempts;
-    unsigned int captures;
     unsigned int xp;
     size_t i;
 
@@ -104,10 +94,7 @@ static void ghostchi_get_progress(const ghostchi_snapshot_t *snap, ghostchi_prog
         return;
     }
 
-    sessions = (unsigned int)snap->total_sessions;
-    attempts = (unsigned int)snap->attempts;
-    captures = ghostchi_effective_captures(snap);
-    xp = (sessions * 10u) + (attempts * 3u) + (captures * 24u);
+    xp = (unsigned int)snap->total_xp;
     out->total_xp = xp;
 
     for (i = 1; i < (sizeof(s_ghostchi_level_xp) / sizeof(s_ghostchi_level_xp[0])); ++i) {
@@ -200,7 +187,7 @@ typedef struct {
 
 static const ghostchi_layout_t k_layout_portrait = {
     .ghost_x_offset = 16,
-    .ghost_y_offset = 0,
+    .ghost_y_offset = 10,
     .bubble_zoom = 512,
     .bubble_x_offset = 26,
     .bubble_y_offset = 2,
@@ -217,7 +204,7 @@ static const ghostchi_layout_t k_layout_portrait = {
 
 static const ghostchi_layout_t k_layout_landscape = {
     .ghost_x_offset = 50,
-    .ghost_y_offset = 14,
+    .ghost_y_offset = 20,
     .bubble_zoom = 512,
     .bubble_x_offset = 22,
     .bubble_min_x = 10,

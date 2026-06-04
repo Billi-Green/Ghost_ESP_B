@@ -1,5 +1,15 @@
 # Ghost ESP Changelog
 
+## Revival v2.0-pre4
+
+ - Expanded Ghostchi XP system from 3 sources to 27 across WiFi, BLE, GPS, IR, NFC, SubGHz, BadUSB, attacks, scans, games, plugins, and settings
+ - Expanded Ghostchi levels from 10 to 50 with a smooth quadratic curve
+ - Added persistent level badge in the status bar visible on every screen, tap to open Ghostchi
+ - Added level-up toast notification
+ - Added Ghostchi activity counters to state file (BLE scans, wardriving, GPS fixes, deauths, aerial detections, PCAP saves, etc.)
+ - Adjusted Ghostchi character positioning on small screens to avoid status bar overlap
+ - Updated Ghostchi docs with full XP source table and corrected quick start path
+
 ## Revival v2.0-pre3
 
  - Added custom asset packs loaded from SD with custom icons, colors, and backgrounds.

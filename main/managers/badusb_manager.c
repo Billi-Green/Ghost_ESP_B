@@ -5,6 +5,7 @@
 #include "managers/badusb_manager.h"
 #include "managers/badusb_builtin_script.h"
 #include "managers/hid_script_parser.h"
+#include "managers/ghostchi_manager.h"
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
 #include "core/glog.h"
@@ -422,6 +423,7 @@ esp_err_t badusb_manager_execute_file(const char *path) {
         free(params);
         return ESP_FAIL;
     }
+    ghostchi_manager_add_xp(8);
 
     return ESP_OK;
 }

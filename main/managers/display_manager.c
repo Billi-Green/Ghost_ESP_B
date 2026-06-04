@@ -9,10 +9,12 @@
 #include "lvgl_helpers.h"
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
+#include "managers/ghostchi_manager.h"
 #include "gui/theme_palette_api.h"
 #include "gui/accessibility_fonts.h"
 #include "gui/design_tokens.h"
 #include "gui/gui_anim.h"
+#include "gui/toast.h"
 #include "managers/views/error_popup.h"
 #include "managers/views/main_menu_screen.h"
 #include "managers/views/options_screen.h"
@@ -28,6 +30,7 @@
 #include "managers/views/subghz_view.h"
 #endif
 #include "managers/views/app_gallery_screen.h"
+#include "managers/views/ghostchi_screen.h"
 #include "managers/views/lockscreen.h"
 #include "managers/views/splash_screen.h"
 #include "managers/encoder_manager.h"
@@ -202,6 +205,7 @@ lv_obj_t *wifi_label = NULL;
 lv_obj_t *bt_label = NULL;
 lv_obj_t *sd_label = NULL;
 lv_obj_t *battery_label = NULL;
+lv_obj_t *level_label = NULL;
 lv_obj_t *mainlabel = NULL;
 
 View *display_manager_previous_view = NULL;
@@ -1074,6 +1078,26 @@ static void status_update_cb(lv_timer_t *timer) {
   // Color will be determined by AP state and power saving mode in update_status_bar
   update_status_bar(true, HasBluetooth, sd_card_manager.is_initialized,
                     battery_percentage, settings_get_power_save_enabled(&G_Settings), server_running);
+
+  if (level_label && lv_obj_is_valid(level_label)) {
+    ghostchi_snapshot_t snap;
+    ghostchi_manager_get_snapshot(&snap);
+    static const unsigned int lv_xp[] = {
+        0, 10, 40, 90, 160, 250, 360, 490, 640, 810, 1000,
+        1210, 1440, 1690, 1960, 2250, 2560, 2890, 3240, 3610, 4000,
+        4410, 4840, 5290, 5760, 6250, 6760, 7290, 7840, 8410, 9000,
+        9610, 10240, 10890, 11560, 12250, 12960, 13690, 14440, 15210, 16000,
+        16810, 17640, 18490, 19360, 20250, 21160, 22090, 23040, 24010, 25000
+    };
+    unsigned int level = 1;
+    unsigned int xp = snap.total_xp;
+    for (size_t i = 1; i < sizeof(lv_xp) / sizeof(lv_xp[0]); ++i) {
+      if (xp < lv_xp[i]) { level = (unsigned int)i; break; }
+      if (i == sizeof(lv_xp) / sizeof(lv_xp[0]) - 1) level = (unsigned int)i;
+    }
+    lv_label_set_text_fmt(level_label, "Lv%u", level);
+    lv_obj_clear_flag(level_label, LV_OBJ_FLAG_HIDDEN);
+  }
 }
 
 void display_manager_update_status_bar_color(void) {
@@ -1106,8 +1130,16 @@ void display_manager_update_status_bar_color(void) {
   if (battery_label && lv_obj_is_valid(battery_label)) {
     lv_obj_set_style_text_color(battery_label, text_color, 0);
   }
+  if (level_label && lv_obj_is_valid(level_label)) {
+    lv_obj_set_style_text_color(level_label, lv_color_hex(0x666666), 0);
+  }
 
   status_update_cb(NULL);
+}
+
+static void level_label_click_cb(lv_event_t *e) {
+    (void)e;
+    display_manager_switch_view(&ghostchi_view);
 }
 
 void display_manager_add_status_bar(const char *CurrentMenuName) {
@@ -1130,6 +1162,7 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
         bt_label = NULL;
         sd_label = NULL;
         battery_label = NULL;
+        level_label = NULL;
         lvgl_obj_del_safe(&old_bar);
     }
     status_bar = lv_obj_create(lv_scr_act());
@@ -1163,6 +1196,12 @@ void display_manager_add_status_bar(const char *CurrentMenuName) {
   lv_obj_set_flex_align(right_container, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
   lv_obj_set_style_pad_column(right_container, GUI_GRID, 0);
   lv_obj_align(right_container, LV_ALIGN_RIGHT_MID, -GUI_SAFEAREA_HOR, 0);
+  level_label = lv_label_create(right_container);
+  lv_label_set_text(level_label, "");
+  lv_obj_set_style_text_color(level_label, lv_color_hex(0x666666), 0);
+  lv_obj_set_style_text_font(level_label, accessibility_get_font_small(), 0);
+  lv_obj_add_flag(level_label, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(level_label, level_label_click_cb, LV_EVENT_CLICKED, NULL);
   sd_label = lv_label_create(right_container);
   lv_label_set_text(sd_label, LV_SYMBOL_SD_CARD);
   lv_obj_set_style_text_color(sd_label, status_text_color, 0);

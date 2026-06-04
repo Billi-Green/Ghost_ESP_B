@@ -4,6 +4,7 @@
 #include "esp_log.h"
 #include "core/glog.h"
 #include "managers/settings_manager.h"
+#include "managers/ghostchi_manager.h"
 #include "soc/gpio_periph.h"
 #include "soc/io_mux_reg.h"
 #include "sys/time.h"
@@ -1142,6 +1143,8 @@ esp_err_t gps_manager_log_wardriving_data(wardriving_data_t *data) {
         ESP_LOGE(GPS_TAG, "Failed to write wardriving data to CSV buffer");
         return ret;
     }
+
+    ghostchi_manager_add_xp(data->ble_data.is_ble_device ? 3 : 4);
 
     if (should_commit_wifi_dedupe) {
         csv_wifi_ap_log_commit(data->bssid, data->rssi, data->ssid);

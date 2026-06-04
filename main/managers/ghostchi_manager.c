@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/task.h"
+#include "gui/toast.h"
 #include "managers/sd_card_manager.h"
 #include "managers/status_display_manager.h"
 #include "managers/wifi_manager.h"
@@ -31,7 +32,7 @@
 #define GHOSTCHI_LEARN_MAGIC 0x314C4847u
 #define GHOSTCHI_STATE_MAGIC 0x31435447u
 #define GHOSTCHI_LEARN_VERSION 1u
-#define GHOSTCHI_STATE_VERSION 1u
+#define GHOSTCHI_STATE_VERSION 2u
 #define GHOSTCHI_COOLDOWN_IDLE_MS 1500u
 #define GHOSTCHI_COOLDOWN_SUCCESS_MS 1800u
 
@@ -68,6 +69,16 @@ typedef struct __attribute__((packed)) {
     uint32_t last_session_end_s;
     uint8_t last_session_end_valid;
     uint8_t reserved2[3];
+    uint32_t total_xp;
+    uint32_t total_ble_scans;
+    uint32_t total_ble_devices;
+    uint32_t total_wardrive_aps;
+    uint32_t total_wardrive_ble;
+    uint32_t total_deauths;
+    uint32_t total_aerial_detections;
+    uint32_t total_gps_fixes;
+    uint32_t total_pcaps_saved;
+    uint32_t total_new_aps_learned;
 } ghostchi_state_file_t;
 
 typedef struct {
@@ -108,6 +119,16 @@ static uint32_t s_total_failures = 0;
 static uint32_t s_last_session_end_s = 0;
 static uint32_t s_total_sessions = 0;
 static bool s_last_session_end_valid = false;
+static uint32_t s_total_xp = 0;
+static uint32_t s_total_ble_scans = 0;
+static uint32_t s_total_ble_devices = 0;
+static uint32_t s_total_wardrive_aps = 0;
+static uint32_t s_total_wardrive_ble = 0;
+static uint32_t s_total_deauths = 0;
+static uint32_t s_total_aerial_detections = 0;
+static uint32_t s_total_gps_fixes = 0;
+static uint32_t s_total_pcaps_saved = 0;
+static uint32_t s_total_new_aps_learned = 0;
 static ghostchi_strategy_t s_active_strategy;
 static ghostchi_target_t s_current_target;
 static bool s_pcap_capture_enabled = false;
@@ -379,6 +400,8 @@ static int upsert_learn_entry(const uint8_t *bssid) {
     }
     memset(&s_learn[idx], 0, sizeof(s_learn[idx]));
     memcpy(s_learn[idx].bssid, bssid, 6);
+    ++s_total_new_aps_learned;
+    ghostchi_manager_add_xp(5);
     return idx;
 }
 
@@ -473,6 +496,16 @@ static void load_state(void) {
     s_total_failures = 0;
     s_last_session_end_s = 0;
     s_last_session_end_valid = false;
+    s_total_xp = 0;
+    s_total_ble_scans = 0;
+    s_total_ble_devices = 0;
+    s_total_wardrive_aps = 0;
+    s_total_wardrive_ble = 0;
+    s_total_deauths = 0;
+    s_total_aerial_detections = 0;
+    s_total_gps_fixes = 0;
+    s_total_pcaps_saved = 0;
+    s_total_new_aps_learned = 0;
     if (!ghostchi_sd_begin(&display_was_suspended, &mounted_here)) return;
 
     f = fopen(GHOSTCHI_STATE_FILE, "rb");
@@ -491,6 +524,30 @@ static void load_state(void) {
         s_total_failures = state.total_failures;
         s_last_session_end_s = state.last_session_end_s;
         s_last_session_end_valid = state.last_session_end_valid != 0;
+        s_total_xp = state.total_xp;
+        s_total_ble_scans = state.total_ble_scans;
+        s_total_ble_devices = state.total_ble_devices;
+        s_total_wardrive_aps = state.total_wardrive_aps;
+        s_total_wardrive_ble = state.total_wardrive_ble;
+        s_total_deauths = state.total_deauths;
+        s_total_aerial_detections = state.total_aerial_detections;
+        s_total_gps_fixes = state.total_gps_fixes;
+        s_total_pcaps_saved = state.total_pcaps_saved;
+        s_total_new_aps_learned = state.total_new_aps_learned;
+    } else {
+        /* Try v1 format for migration */
+        rewind(f);
+        memset(&state, 0, sizeof(state));
+        if (fread(&state, 1, 32, f) >= 32 &&
+            state.magic == GHOSTCHI_STATE_MAGIC &&
+            state.version == 1u) {
+            s_total_sessions = state.total_sessions;
+            s_total_handshakes = state.total_handshakes;
+            s_total_attempts = state.total_attempts;
+            s_total_failures = state.total_failures;
+            s_last_session_end_s = state.last_session_end_s;
+            s_last_session_end_valid = state.last_session_end_valid != 0;
+        }
     }
     fclose(f);
     ghostchi_sd_end(display_was_suspended, mounted_here);
@@ -518,6 +575,16 @@ static void save_state(void) {
     state.total_failures = s_total_failures;
     state.last_session_end_s = s_last_session_end_s;
     state.last_session_end_valid = s_last_session_end_valid ? 1u : 0u;
+    state.total_xp = s_total_xp;
+    state.total_ble_scans = s_total_ble_scans;
+    state.total_ble_devices = s_total_ble_devices;
+    state.total_wardrive_aps = s_total_wardrive_aps;
+    state.total_wardrive_ble = s_total_wardrive_ble;
+    state.total_deauths = s_total_deauths;
+    state.total_aerial_detections = s_total_aerial_detections;
+    state.total_gps_fixes = s_total_gps_fixes;
+    state.total_pcaps_saved = s_total_pcaps_saved;
+    state.total_new_aps_learned = s_total_new_aps_learned;
     (void)fwrite(&state, 1, sizeof(state), f);
     fclose(f);
     ghostchi_sd_end(display_was_suspended, mounted_here);
@@ -815,6 +882,7 @@ void ghostchi_manager_tick(void) {
         }
         target_result_update(&s_current_target, true);
         session_log("result=success total=%lu\n", (unsigned long)handshakes_now);
+        ghostchi_manager_add_xp(24);
         ghostchi_enter_cooldown("capture confirmed", s_current_target.reason, GHOSTCHI_COOLDOWN_SUCCESS_MS, false);
         return;
     }
@@ -848,6 +916,7 @@ void ghostchi_manager_tick(void) {
                         ++s_snapshot.attempts;
                         xSemaphoreGive(s_lock);
                     }
+                    ghostchi_manager_add_xp(3);
                     session_log("target=%02x:%02x:%02x:%02x:%02x:%02x ch=%u score=%u reason=%s\n",
                                 s_current_target.ap.bssid[0], s_current_target.ap.bssid[1], s_current_target.ap.bssid[2],
                                 s_current_target.ap.bssid[3], s_current_target.ap.bssid[4], s_current_target.ap.bssid[5],
@@ -874,6 +943,8 @@ void ghostchi_manager_tick(void) {
                 wifi_manager_start_deauth();
                 s_deauth_active = true;
                 s_deauth_used = true;
+                ++s_total_deauths;
+                ghostchi_manager_add_xp(2);
                 s_phase_deadline_ms = now + s_active_strategy.deauth_ms;
                 snapshot_set_state(GHOSTCHI_STATE_STIM, "deauth burst", s_current_target.reason);
             } else {
@@ -908,6 +979,32 @@ void ghostchi_manager_tick(void) {
     }
 }
 
+static unsigned int ghostchi_level_from_xp(uint32_t xp) {
+    static const unsigned int tbl[] = {
+        0, 10, 40, 90, 160, 250, 360, 490, 640, 810, 1000,
+        1210, 1440, 1690, 1960, 2250, 2560, 2890, 3240, 3610, 4000,
+        4410, 4840, 5290, 5760, 6250, 6760, 7290, 7840, 8410, 9000,
+        9610, 10240, 10890, 11560, 12250, 12960, 13690, 14440, 15210, 16000,
+        16810, 17640, 18490, 19360, 20250, 21160, 22090, 23040, 24010, 25000
+    };
+    for (size_t i = 1; i < sizeof(tbl) / sizeof(tbl[0]); ++i) {
+        if (xp < tbl[i]) return (unsigned int)i;
+    }
+    return (unsigned int)(sizeof(tbl) / sizeof(tbl[0]) - 1);
+}
+
+void ghostchi_manager_add_xp(uint32_t amount) {
+    if (amount == 0) return;
+    unsigned int old_level = ghostchi_level_from_xp(s_total_xp);
+    s_total_xp += amount;
+    unsigned int new_level = ghostchi_level_from_xp(s_total_xp);
+    if (new_level > old_level) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "Level %u!", new_level);
+        toast_show(buf, TOAST_SUCCESS);
+    }
+}
+
 void ghostchi_manager_get_snapshot(ghostchi_snapshot_t *out) {
     bool idle_valid = false;
     if (!out) return;
@@ -921,6 +1018,7 @@ void ghostchi_manager_get_snapshot(ghostchi_snapshot_t *out) {
         out->handshakes = s_total_handshakes;
         out->attempts = s_total_attempts;
         out->failures = s_total_failures;
+        out->total_xp = s_total_xp;
         strncpy(out->status_line, out->sd_ready ? "ready" : "sd required", sizeof(out->status_line) - 1);
         return;
     }
@@ -931,6 +1029,7 @@ void ghostchi_manager_get_snapshot(ghostchi_snapshot_t *out) {
         out->attempts = s_total_attempts + s_snapshot.attempts;
         out->failures = s_total_failures + s_snapshot.failures;
         out->total_sessions = s_total_sessions;
+        out->total_xp = s_total_xp;
         xSemaphoreGive(s_lock);
     } else {
         memset(out, 0, sizeof(*out));
@@ -967,6 +1066,7 @@ bool ghostchi_manager_start(void) {
     ++s_total_sessions;
     s_last_session_end_s = 0;
     s_last_session_end_valid = false;
+    ghostchi_manager_add_xp(10);
     save_state();
     s_stop_requested = false;
     s_scan_active = false;

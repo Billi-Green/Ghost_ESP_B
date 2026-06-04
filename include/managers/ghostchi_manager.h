@@ -25,6 +25,7 @@ typedef struct {
     uint32_t failures;
     uint32_t idle_for_sec;
     uint32_t total_sessions;
+    uint32_t total_xp;
     uint16_t aps_visible;
     uint8_t current_channel;
     uint8_t confidence;
@@ -42,5 +43,6 @@ bool ghostchi_manager_probe_storage(void);
 bool ghostchi_manager_start(void);
 void ghostchi_manager_tick(void);
 void ghostchi_manager_stop(void);
+void ghostchi_manager_add_xp(uint32_t amount);
 
 #endif

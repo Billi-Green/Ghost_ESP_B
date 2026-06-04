@@ -28,6 +28,7 @@
 #include <managers/rgb_manager.h>
 #include "managers/settings_manager.h"
 #include "managers/status_display_manager.h"
+#include "managers/ghostchi_manager.h"
 #include "esp_bt.h"
 #include "managers/ap_manager.h"
 #include "managers/wifi_manager.h"
@@ -175,6 +176,9 @@ int ble_gap_event_general(struct ble_gap_event *event, void *arg) {
                      (unsigned long)disc_log_counter,
                      event->disc.rssi,
                      (unsigned int)event->disc.length_data);
+        }
+        if ((disc_log_counter % 10) == 0) {
+            ghostchi_manager_add_xp(2);
         }
         notify_handlers(event, event->disc.length_data);
         ble_cb_busy = false;
@@ -774,6 +778,7 @@ bool ble_start_scanning(void) {
         ESP_LOGI(TAG_BLE, "Scanning started...");
         TERMINAL_VIEW_ADD_TEXT("Scanning started...\n");
         status_display_show_status("BLE Scanning");
+        ghostchi_manager_add_xp(5);
         return true;
     }
 }

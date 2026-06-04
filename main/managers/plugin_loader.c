@@ -4,6 +4,7 @@
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "managers/ghostchi_manager.h"
 #include "managers/sd_card_manager.h"
 #include "managers/views/plugin_runner_view.h"
 #include "sdkconfig.h"
@@ -251,6 +252,7 @@ esp_err_t plugin_loader_start(plugin_loaded_app_t *loaded) {
     loaded->running = true;
     loaded->state = PLUGIN_APP_STATE_RUNNING;
     loaded->last_tick_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+    ghostchi_manager_add_xp(5);
     return ESP_OK;
 }
 

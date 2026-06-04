@@ -4,6 +4,7 @@
 #include "lvgl.h"
 #include "managers/display_manager.h"
 #include "mbedtls/base64.h"  // For base64 decoding
+#include "managers/ghostchi_manager.h"
 #include "managers/rgb_manager.h"
 #include <esp_log.h>
 #include <string.h>
@@ -1298,6 +1299,7 @@ void settings_save(const FSettings *settings) {
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "Failed to commit settings_save: %s", esp_err_to_name(err));
     }
+    ghostchi_manager_add_xp(1);
 }
 
 void settings_set_ap_ssid(FSettings *settings, const char *ssid) {

@@ -5,6 +5,7 @@
 #include "managers/views/terminal_screen.h"
 #include "managers/wifi_manager.h"
 #include "managers/status_display_manager.h"
+#include "managers/ghostchi_manager.h"
 #include "core/utils.h"
 #include "vendor/GPS/gps_logger.h"
 #include "vendor/pcap.h"
@@ -2318,6 +2319,7 @@ static void trim_trailing(char *str) {
 
 void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int32_t event_id,
                        void *event_data) {
+    static bool gps_fix_xp_awarded = false;
     switch (event_id) {
     case GPS_UPDATE:
         gps = (gps_t *)event_data;
@@ -2327,12 +2329,17 @@ void gps_event_handler(void *event_handler_arg, esp_event_base_t event_base, int
         
         // Add status display messages for GPS fix status
         if (gps->valid && gps->fix >= GPS_FIX_GPS && gps->fix_mode >= GPS_MODE_2D && gps->sats_in_use > 0) {
+            if (!gps_fix_xp_awarded) {
+                ghostchi_manager_add_xp(15);
+                gps_fix_xp_awarded = true;
+            }
             if (gps->fix_mode == GPS_MODE_3D) {
                 status_display_show_status("GPS 3D Lock");
             } else {
                 status_display_show_status("GPS 2D Lock");
             }
         } else if (gps->valid && gps->fix == GPS_FIX_INVALID) {
+            gps_fix_xp_awarded = false;
             status_display_show_status("GPS No Fix");
         }
         break;

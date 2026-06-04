@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "esp_wifi.h" // For internet connectivity check
 #include "lvgl.h"
+#include "managers/ghostchi_manager.h"
 #include "managers/settings_manager.h"
 #include "gui/accessibility_fonts.h"
 #include "managers/views/flappy_ghost_screen.h"
@@ -520,6 +521,7 @@ void flappy_bird_game_over() {
   if (is_game_over)
     return; // Prevent multiple triggers
   is_game_over = true;
+  ghostchi_manager_add_xp(5);
 
   // Create a semi-transparent overlay
   lv_obj_t *game_over_container = lv_obj_create(flappy_bird_view.root);

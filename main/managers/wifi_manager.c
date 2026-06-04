@@ -7,6 +7,7 @@
 #include "core/callbacks.h"  // For callback function declarations
 #include "core/network_constants.h" // For common port definitions
 #include "core/ouis.h"       // For OUI vendor lookup
+#include "managers/ghostchi_manager.h"
 #include "vendor/pcap.h"     // For pcap_is_wireshark_mode()
 #include "esp_crt_bundle.h"
 #include "esp_event.h"
@@ -718,6 +719,7 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base, int32_t e
         glog("Got IP: %s\n", ip4addr_ntoa(&event->ip_info.ip));
         status_display_show_status("WiFi Connected");
         toast_show("WiFi connected", TOAST_SUCCESS);
+        ghostchi_manager_add_xp(3);
 
         /* Set reliable fallback DNS servers so external resolution doesn't
          * depend entirely on the router's DNS. DHCP sets DNS_MAIN (index 0);
@@ -1456,6 +1458,7 @@ esp_err_t wifi_manager_start_evil_portal(const char *URLorFilePath, const char *
         ESP_LOGE(TAG, "portal start: wifi ctrl mutex lock failed");
         return ESP_FAIL;
     }
+    ghostchi_manager_add_xp(5);
 
     // temporarily increase wifi logging while debugging portal association failures
     esp_log_level_set("wifi", ESP_LOG_WARN);

@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "cJSON.h"
+#include "managers/ghostchi_manager.h"
 #include "managers/sd_card_manager.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -635,6 +636,7 @@ void infrared_manager_poltergeist_hold_io24_end(void) {
 bool infrared_manager_transmit(const infrared_signal_t *signal) {
     if (!signal) return false;
     ESP_LOGI(TAG_IR_MANAGER, "transmitting IR signal (name: %s)", signal->name);
+    ghostchi_manager_add_xp(4);
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
     bool poltergeist_local_hold = false;
     if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "poltergeist") == 0) {
