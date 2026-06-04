@@ -5,13 +5,16 @@
  - Fixed Waveshare 7-inch (ESP32-S3-Touch-LCD-7) backlight and touch
  - Expanded Ghostchi XP system from 3 sources to 27 across WiFi, BLE, GPS, IR, NFC, SubGHz, BadUSB, attacks, scans, games, plugins, and settings
  - Expanded Ghostchi levels from 10 to 50 with a smooth quadratic curve
- - Added persistent level badge in the status bar visible on every screen, tap to open Ghostchi
+ - Added persistent level badge in the status bar visible on every screen
  - Added level-up toast notification
  - Added Ghostchi activity counters to state file (BLE scans, wardriving, GPS fixes, deauths, aerial detections, PCAP saves, etc.)
  - Added Wardriving settings for per-chip hop intervals and weighted 5GHz channel hopping, synced over GhostLink
  - Replaced on/off settings rows with iOS-style toggles for a slightly nicer feel
  - Fixed Invert Colors setting not refreshing the screen until something else triggered a redraw
  - Added more Display Timeout options: 15s, 2m, and 5m
+ - Slimmed and rounded the terminal's bottom touch controls to match the rest of the UI
+ - Themed the terminal's input bar and back button via the palette instead of hardcoded colors
+ - Cached the DualComm line check per row to keep the split-view terminal smooth
 
 ## Revival v2.0-pre3
 
