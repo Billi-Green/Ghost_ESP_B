@@ -8,10 +8,10 @@
  - Added persistent level badge in the status bar visible on every screen, tap to open Ghostchi
  - Added level-up toast notification
  - Added Ghostchi activity counters to state file (BLE scans, wardriving, GPS fixes, deauths, aerial detections, PCAP saves, etc.)
- - Adjusted Ghostchi character positioning on small screens to avoid status bar overlap
- - Updated Ghostchi docs with full XP source table and corrected quick start path
  - Added Wardriving settings for per-chip hop intervals and weighted 5GHz channel hopping, synced over GhostLink
  - Replaced on/off settings rows with iOS-style toggles for a slightly nicer feel
+ - Fixed Invert Colors setting not refreshing the screen until something else triggered a redraw
+ - Added more Display Timeout options: 15s, 2m, and 5m
 
 ## Revival v2.0-pre3
 

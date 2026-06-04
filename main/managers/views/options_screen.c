@@ -832,7 +832,7 @@ static const char * const rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", 
 static const char * const rgb_mode_options[] = {"Normal", "Rainbow", "Stealth", "Knight Rider", "Red", "Green", "Blue", "Yellow", "TWH Purple", "Cyan", "Orange", "White", "Pink"};
 #define RGB_MODE_COUNT 13
 #endif
-static const char * const timeout_options[] = {"5s", "10s", "30s", "60s", "Never"};
+static const char * const timeout_options[] = {"5s", "10s", "15s", "30s", "60s", "2m", "5m", "Never"};
 static const char * const theme_options[] = {"Default", "Pastel", "Dark", "Bright", "Solarized", "Monochrome", "Rose Red", "Purple", "Blue", "Orange", "Neon", "Cyberpunk", "Ocean", "Sunset", "Forest", "Cherry Blossom", "Soft Sand"};
 static const char * const bool_options[] = {"Off", "On"};
 static const char * const textcolor_options[] = {"Green", "White", "Red", "Blue", "Yellow", "Cyan", "Magenta", "Orange"};
@@ -894,7 +894,7 @@ static const char * const mic_contrast_options[] = {
 #endif
 
 static SettingsItem settings_items[] = {
-    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 5, 1, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
+    {"Display Timeout", SETTING_DISPLAY_TIMEOUT, timeout_options, 8, 1, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
 #ifdef CONFIG_LV_DISP_BACKLIGHT_PWM
     {"Max Brightness", SETTING_MAX_BRIGHTNESS, brightness_options, 10, 9, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
 #endif
@@ -1938,7 +1938,14 @@ static void load_current_settings_values(void) {
                 break;
             case SETTING_DISPLAY_TIMEOUT: {
                 uint32_t timeout = settings_get_display_timeout(&G_Settings);
-                settings_items[i].current_value = timeout < 7500 ? 0 : timeout < 15000 ? 1 : timeout < 45000 ? 2 : timeout < 60000 ? 3 : 4;
+                if (timeout == 0)                              settings_items[i].current_value = 7; // Never
+                else if (timeout < 7500)                       settings_items[i].current_value = 0; // 5s
+                else if (timeout < 12500)                      settings_items[i].current_value = 1; // 10s
+                else if (timeout < 22500)                      settings_items[i].current_value = 2; // 15s
+                else if (timeout < 45000)                      settings_items[i].current_value = 3; // 30s
+                else if (timeout < 90000)                      settings_items[i].current_value = 4; // 60s
+                else if (timeout < 210000)                     settings_items[i].current_value = 5; // 2m
+                else                                            settings_items[i].current_value = 6; // 5m
                 break;
             }
             case SETTING_MENU_THEME:
@@ -2145,7 +2152,18 @@ static void apply_setting_change(int setting_index, int new_value) {
             display_manager_update_status_bar_color();
             break;
         case SETTING_DISPLAY_TIMEOUT: {
-            uint32_t timeout_ms = new_value == 0 ? 5000 : new_value == 1 ? 10000 : new_value == 2 ? 30000 : new_value == 3 ? 60000 : 0; // Handle "Never"
+            // Indices: 0=5s, 1=10s, 2=15s, 3=30s, 4=60s, 5=2m, 6=5m, 7=Never
+            uint32_t timeout_ms;
+            switch (new_value) {
+                case 0: timeout_ms = 5000;   break;  // 5s
+                case 1: timeout_ms = 10000;  break;  // 10s
+                case 2: timeout_ms = 15000;  break;  // 15s
+                case 3: timeout_ms = 30000;  break;  // 30s
+                case 4: timeout_ms = 60000;  break;  // 60s
+                case 5: timeout_ms = 120000; break;  // 2m
+                case 6: timeout_ms = 300000; break;  // 5m
+                default: timeout_ms = 0;      break;  // Never
+            }
             settings_set_display_timeout(&G_Settings, timeout_ms);
             break;
         }
@@ -2165,6 +2183,14 @@ static void apply_setting_change(int setting_index, int new_value) {
             break;
         case SETTING_INVERT_COLORS:
             settings_set_invert_colors(&G_Settings, new_value == 1);
+            // Invert is read in the flush callback, so we need to force a
+            // re-paint of the visible view for the change to take effect.
+            if (g_options_view) {
+                options_view_refresh_styles(g_options_view);
+            }
+            if (touch_bar && lv_obj_is_valid(touch_bar)) {
+                lv_obj_invalidate(touch_bar);
+            }
             break;
         case SETTING_WEB_AUTH:
             settings_set_web_auth_enabled(&G_Settings, new_value == 1);
