@@ -2,6 +2,7 @@
 
 ## Revival v2.0-pre4
 
+ - Fixed Waveshare 7-inch (ESP32-S3-Touch-LCD-7) backlight and touch
  - Expanded Ghostchi XP system from 3 sources to 27 across WiFi, BLE, GPS, IR, NFC, SubGHz, BadUSB, attacks, scans, games, plugins, and settings
  - Expanded Ghostchi levels from 10 to 50 with a smooth quadratic curve
  - Added persistent level badge in the status bar visible on every screen, tap to open Ghostchi

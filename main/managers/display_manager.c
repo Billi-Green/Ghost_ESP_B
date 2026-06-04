@@ -76,7 +76,7 @@ uint32_t theme_palette_get_text_muted(uint8_t theme);
 static TaskHandle_t hardware_input_task_handle = NULL;
 static StackType_t *hardware_input_task_stack = NULL;
 static StaticTask_t *hardware_input_task_buffer = NULL;
-#ifdef CONFIG_USE_TDISPLAY_S3
+#if defined(CONFIG_USE_TDISPLAY_S3) || defined(CONFIG_Waveshare_LCD)
 static i2c_master_bus_handle_t s_touch_i2c_bus = NULL;
 #endif
 #endif
@@ -125,6 +125,10 @@ static volatile bool g_cached_batt_valid = false;
 
 #ifdef CONFIG_USE_7_INCHER
 #include "vendor/drivers/ST7262.h"
+#endif
+
+#ifdef CONFIG_Waveshare_LCD
+#include "vendor/drivers/CH422G.h"
 #endif
 
 #ifdef CONFIG_JC3248W535EN_LCD
@@ -1290,6 +1294,40 @@ void apply_power_management_config(bool power_save_enabled) {
   }
 }
 
+#ifdef CONFIG_Waveshare_LCD
+static void waveshare_ch422g_init(void)
+{
+  esp_io_expander_ch422g_t *ch422g_dev = NULL;
+  esp_err_t err = ch422g_new_device(I2C_NUM_0, 0x24, &ch422g_dev);
+  if (err != ESP_OK) {
+    ESP_LOGE(TAG, "CH422G init failed: %s", esp_err_to_name(err));
+    return;
+  }
+
+  uint32_t direction = 0, output_value = 0;
+  ch422g_read_direction_reg(ch422g_dev, &direction);
+  ch422g_read_output_reg(ch422g_dev, &output_value);
+
+  // EXIO1 = Touch Reset (set as output, HIGH to release touch from reset)
+  direction &= ~(1 << 1);
+  output_value |= (1 << 1);
+
+  // EXIO2 = Backlight Enable (set as output, HIGH to enable backlight)
+  direction &= ~(1 << 2);
+  output_value |= (1 << 2);
+
+  // EXIO4 = SD Card CS (set as output, HIGH to disable SD card)
+  direction &= ~(1 << 4);
+  output_value |= (1 << 4);
+
+  ch422g_write_direction_reg(ch422g_dev, direction);
+  ch422g_write_output_reg(ch422g_dev, output_value);
+
+  cleanup_resources(ch422g_dev, I2C_NUM_0);
+  ESP_LOGI(TAG, "CH422G initialized: EXIO1=1 (touch rst), EXIO2=1 (backlight), EXIO4=1 (SD CS)");
+}
+#endif
+
 void display_manager_init(void) {
   ESP_LOGI(TAG, "display_manager_init: starting, free internal RAM: %d bytes", 
            (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
@@ -1299,6 +1337,14 @@ void display_manager_init(void) {
     lvgl_i2c_locking(i2c_bus_get_lock_handle());
     lvgl_lock_registered = true;
   }
+
+#ifdef CONFIG_Waveshare_LCD
+  static bool ch422g_initialized = false;
+  if (!ch422g_initialized) {
+    waveshare_ch422g_init();
+    ch422g_initialized = true;
+  }
+#endif
 
   ESP_LOGI(TAG, "display_manager: configuring power management...");
   esp_pm_config_t pm_cfg = {
@@ -1315,13 +1361,14 @@ void display_manager_init(void) {
 
   apply_power_management_config(settings_get_power_save_enabled(&G_Settings));
 
-  // Configure LEDC timer for backlight
+  // Configure LEDC timer for backlight (only for PWM boards or TDisplay S3)
+#if defined(CONFIG_USE_TDISPLAY_S3) || defined(CONFIG_LV_DISP_BACKLIGHT_PWM)
   ledc_timer_config_t ledc_timer = {
       .speed_mode = LEDC_LOW_SPEED_MODE,
       .duty_resolution = LEDC_TIMER_10_BIT,
       .timer_num = BACKLIGHT_TIMER,
       .freq_hz = 5000, // 5 kHz
-      .clk_cfg = LEDC_USE_RC_FAST_CLK, // Use stable APB clock for reliable PWM 
+      .clk_cfg = LEDC_USE_RC_FAST_CLK, // Use stable APB clock for reliable PWM
   };
   ledc_timer_config(&ledc_timer);
 
@@ -1349,8 +1396,9 @@ void display_manager_init(void) {
     ESP_LOGI(TAG, "Backlight GPIO not configured; skipping LEDC channel init");
   }
   #endif
-  ESP_LOGI(TAG, "display_manager: LEDC configured, free internal RAM: %d bytes", 
+  ESP_LOGI(TAG, "display_manager: LEDC configured, free internal RAM: %d bytes",
            (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+#endif // CONFIG_USE_TDISPLAY_S3 || CONFIG_LV_DISP_BACKLIGHT_PWM
 
 #ifdef CONFIG_USE_TDECK
 set_keyboard_brightness(0xFF); // Set to 100% brightness
@@ -1395,6 +1443,28 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
     ESP_LOGI(TAG, "I2C bus ready for touch functionality");
   } else {
     ESP_LOGE(TAG, "Failed to initialize touch I2C bus: %s", esp_err_to_name(i2c_ret));
+  }
+#endif
+#ifdef CONFIG_Waveshare_LCD
+  ESP_LOGI(TAG, "Pre-initializing I2C bus for Waveshare 7-inch touch");
+  esp_err_t ws_i2c_ret = i2c_master_get_bus_handle(I2C_NUM_0, &s_touch_i2c_bus);
+  if (ws_i2c_ret == ESP_ERR_NOT_FOUND || ws_i2c_ret == ESP_ERR_INVALID_STATE) {
+    i2c_master_bus_config_t ws_i2c_config = {
+      .i2c_port = I2C_NUM_0,
+      .sda_io_num = 8,
+      .scl_io_num = 9,
+      .clk_source = I2C_CLK_SRC_DEFAULT,
+      .glitch_ignore_cnt = 7,
+      .intr_priority = 0,
+      .trans_queue_depth = 0,
+      .flags.enable_internal_pullup = true,
+    };
+    ws_i2c_ret = i2c_new_master_bus(&ws_i2c_config, &s_touch_i2c_bus);
+  }
+  if (ws_i2c_ret == ESP_OK) {
+    ESP_LOGI(TAG, "Waveshare I2C bus ready for touch (SDA=8, SCL=9)");
+  } else {
+    ESP_LOGE(TAG, "Failed to initialize Waveshare I2C bus: %s", esp_err_to_name(ws_i2c_ret));
   }
 #endif
   ESP_LOGI(TAG, "display_manager: initializing LVGL...");
@@ -1876,6 +1946,11 @@ void set_backlight_brightness(uint8_t percentage) {
     // ----- switch mode -----
     // make sure the pin is configured as a GPIO output
 
+#ifdef CONFIG_Waveshare_LCD
+    // Waveshare 7-inch backlight is controlled by CH422G EXIO2, not GPIO
+    // It's already set HIGH in waveshare_ch422g_init()
+    ESP_LOGI(TAG, "set_backlight_brightness: %d%% (CH422G EXIO2, already on)", percentage);
+#else
     if (CONFIG_LV_DISP_PIN_BCKL >= 0) {
         gpio_reset_pin(CONFIG_LV_DISP_PIN_BCKL);
         gpio_set_direction(CONFIG_LV_DISP_PIN_BCKL, GPIO_MODE_OUTPUT);
@@ -1883,6 +1958,7 @@ void set_backlight_brightness(uint8_t percentage) {
     } else {
         ESP_LOGD(TAG, "Backlight GPIO not configured; skipping switch backlight");
     }
+#endif
 #else
 # error "Either CONFIG_LV_DISP_BACKLIGHT_PWM or CONFIG_LV_DISP_BACKLIGHT_SWITCH must be set"
 #endif
