@@ -376,7 +376,7 @@ void flappy_bird_view_hardwareinput_callback(InputEvent *event) {
     lv_obj_t *game_over_label = lv_obj_get_child(game_over_container, -1);
 
     if (event->type == INPUT_TYPE_TOUCH) {
-      ESP_LOGI(TAG, "Touch event");
+      ESP_LOGD(TAG, "Touch event");
       int touch_x = event->data.touch_data.point.x;
       int touch_y = event->data.touch_data.point.y;
 
@@ -412,7 +412,7 @@ void flappy_bird_view_hardwareinput_callback(InputEvent *event) {
       bird_velocity = settings.flap_strength;
     }
   } else if (event->type == INPUT_TYPE_TOUCH) {
-    ESP_LOGI(TAG, "Touch event");
+    ESP_LOGD(TAG, "Touch event");
     bird_velocity = settings.flap_strength;
   } else if (event->type == INPUT_TYPE_KEYBOARD) { // dummy for handling keyboard input while playing
       ESP_LOGW(TAG, "keyboard event; unhandled");

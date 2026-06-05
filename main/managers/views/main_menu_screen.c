@@ -626,7 +626,7 @@ static void menu_button_click_handler(lv_event_t *event) {
  */
 static void menu_item_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
-        ESP_LOGI(TAG, "Touch event");
+        ESP_LOGD(TAG, "Touch event");
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
             if (!touch_started) {

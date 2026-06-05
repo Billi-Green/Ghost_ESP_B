@@ -108,6 +108,7 @@ extern dns_server_handle_t dns_handle;
 #include "esp_chip_info.h"
 #include "esp_idf_version.h"
 #include "core/ghostesp_version.h"
+#include "core/chip_info.h"
 #include "core/memory_debug.h"
 #include "managers/chameleon_manager.h"
 #include <stddef.h>
@@ -913,7 +914,7 @@ static volatile bool g_eth_scan_cancel = false;
 #endif
 
 void handle_stop_flipper(int argc, char **argv) {
-    glog("[stop] stopping all activities...\n");
+    bool stopped_any = false;
 
 #ifdef CONFIG_ENABLE_MIC_RGB_VISUALIZER
     rgb_manager_set_mic_stream_suspended(true);
@@ -922,52 +923,56 @@ void handle_stop_flipper(int argc, char **argv) {
 #ifdef CONFIG_HAS_MIC
     bool restart_mic_visualizer = mic_visualizer_is_running();
     if (restart_mic_visualizer) {
-        glog("[stop] mic visualizer\n");
+        glog("Stopped mic visualizer.\n");
+        stopped_any = true;
     }
     mic_visualizer_stop();
 #endif
 
     if (g_ir_universal_send_task != NULL) {
-        glog("[stop] IR universal send\n");
+        glog("Stopped IR universal send.\n");
+        stopped_any = true;
         g_ir_universal_send_cancel = true;
     }
 
-    glog("[stop] wardriving\n");
     stop_wardriving();
     if (!esp_comm_manager_is_remote_command()) {
         if (esp_comm_manager_is_connected()) {
-            bool peer_stop_ok = esp_comm_manager_send_command("startwd", "-s --helper");
-            glog(peer_stop_ok
-                     ? "[stop] wardrive helper stop sent to peer\n"
-                     : "[stop] wardrive helper stop could not be sent to peer\n");
+            esp_comm_manager_send_command("startwd", "-s --helper");
         }
         wardriving_set_peer_assist(false);
     }
 
-    glog("[stop] WiFi: deauth, channel switch, connect cancel\n");
+    if (wifi_manager_is_channel_switch_attack_running()) {
+        glog("Stopped channel switch attack.\n");
+        stopped_any = true;
+    }
     wifi_manager_stop_deauth();
     wifi_manager_stop_channel_switch_attack();
     wifi_manager_cancel_connect();
 
 #ifndef CONFIG_IDF_TARGET_ESP32S2
-    glog("[stop] BLE: spam, gatt, scan\n");
+    if (ble_spam_is_running()) {
+        glog("Stopped BLE spam.\n");
+        stopped_any = true;
+    }
     ble_spam_stop();
     ble_stop_gatt_scan();
     ble_stop();
 #endif
 
     if (csv_buffer_has_pending_data()) { // Only flush if there's data in buffer
-        glog("[stop] flushing CSV buffer\n");
+        glog("Flushed pending CSV data.\n");
+        stopped_any = true;
         csv_flush_buffer_to_file();
     }
-    glog("[stop] closing CSV/PCAP\n");
     csv_file_close();                  // Close any open CSV files
-    glog("[stop] GPS deinit\n");
     gps_manager_deinit(&g_gpsManager); // Clean up GPS if active
 
     // stop aerial operations
     if (aerial_detector_is_scanning() || aerial_detector_is_emulating()) {
-        glog("[stop] aerial: scan, emulate, untrack\n");
+        glog("Stopped aerial detector.\n");
+        stopped_any = true;
         if (aerial_detector_is_scanning()) {
             aerial_detector_stop_scan();
         }
@@ -979,18 +984,23 @@ void handle_stop_flipper(int argc, char **argv) {
 
     // stop flock detector if running
     if (flock_detector_is_running()) {
-        glog("[stop] flock detector\n");
+        glog("Stopped flock detector.\n");
+        stopped_any = true;
         flock_detector_stop();
     }
 
     // also stop any in-progress IR RX (ir rx / ir learn) and dazzler
-    glog("[stop] IR: rx cancel, dazzler\n");
+    if (infrared_manager_dazzler_is_active()) {
+        glog("Stopped IR dazzler.\n");
+        stopped_any = true;
+    }
     infrared_manager_rx_cancel();
     infrared_manager_dazzler_stop();
 
     // also stop the gps info display task if it is running
     if (gps_info_task_handle != NULL) {
-        glog("[stop] GPS info display task\n");
+        glog("Stopped GPS info display.\n");
+        stopped_any = true;
         vTaskDelete(gps_info_task_handle);
         gps_info_task_handle = NULL;
 
@@ -1005,56 +1015,73 @@ void handle_stop_flipper(int argc, char **argv) {
         }
     }
 
-    glog("[stop] WiFi: monitor, deauth-station, dhcp-starve, eapol, sae, karma, evil-portal\n");
     wifi_manager_stop_monitor_mode();  // Stop any active monitoring
-    wifi_manager_stop_deauth_station();
+    if (wifi_manager_stop_deauth_station()) {
+        glog("Stopped station deauth.\n");
+        stopped_any = true;
+    }
     wifi_manager_stop_deauth();
     dhcp_starvation_stop();
     wifi_manager_stop_eapollogoff_attack();
     wifi_manager_stop_sae_flood();
+    if (wifi_manager_karma_is_running()) {
+        glog("Stopped Karma attack.\n");
+        stopped_any = true;
+    }
     wifi_manager_stop_karma();            // stop karma attack (sets flag; task self-exits)
-    wifi_manager_stop_evil_portal();  // stop evil portal and flush credentials
+    if (wifi_manager_is_evil_portal_active()) {
+        glog("Stopped evil portal.\n");
+        stopped_any = true;
+        wifi_manager_stop_evil_portal();  // stop evil portal and flush credentials
+    } else {
+        wifi_manager_clear_html_buffer();
+    }
 
     {
         dns_server_handle_t h = dns_handle_take();
         if (h) {
-            glog("[stop] DNS sinkhole\n");
+            glog("Stopped DNS sinkhole.\n");
+            stopped_any = true;
             stop_dns_server(h);
         }
     }
 
-    glog("[stop] WiFi: tracking, beacon\n");
     wifi_manager_stop_tracking();  // stop ap/sta rssi tracking
     wifi_manager_stop_beacon();  // stop beacon spam
 
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     // ensure zigbee capture is stopped when using generic stop
-    glog("[stop] zigbee capture\n");
     zigbee_manager_stop_capture();
 #endif
 #ifdef CONFIG_WITH_ETHERNET
     g_eth_scan_cancel = true;
     if (eth_arp_poison_is_running()) {
-        glog("[stop] Ethernet ARP poison\n");
+        glog("Stopped Ethernet ARP poison.\n");
+        stopped_any = true;
         eth_arp_poison_stop();
     }
 #endif
     // ensure pcap is properly flushed and closed
     pcap_file_close();
-    glog("All activities stopped.\n");
-    status_display_show_status("All Stopped");
 
     // reconnect to saved WiFi if credentials exist
-    glog("[stop] reconnecting WiFi STA from saved settings\n");
     wifi_manager_configure_sta_from_settings();
 
     // kill any feature tasks we spawned that may still be around
     if (VisualizerHandle != NULL) {
-        glog("[stop] WiFi visualizer\n");
+        glog("Stopped WiFi visualizer.\n");
+        stopped_any = true;
         wifi_manager_stop_visualizer();
     }
-    glog("[stop] restarting RGB effect from settings\n");
     settings_restart_rgb_effect();
+
+    if (stopped_any) {
+        glog("All activities stopped.\n");
+        status_display_show_status("All Stopped");
+    } else {
+        glog("Nothing was running.\n");
+        status_display_show_status("Nothing Running");
+    }
 
 #ifdef CONFIG_HAS_MIC
     if (restart_mic_visualizer) {
@@ -7179,194 +7206,43 @@ void handle_ap_enable_cmd(int argc, char **argv) {
 
 void handle_chip_info_cmd(int argc, char **argv) {
     vTaskDelay(pdMS_TO_TICKS(50));
-    
+
     glog("[CHIPINFO_START]\n");
-    
-    esp_chip_info_t chip_info;
-    uint32_t flash_size;
-    
-    esp_chip_info(&chip_info);
-    
-    const char *model_name = "Unknown";
-    switch(chip_info.model) {
-        case CHIP_ESP32:
-            model_name = "ESP32";
-            break;
-        case CHIP_ESP32S2:
-            model_name = "ESP32-S2";
-            break;
-        case CHIP_ESP32S3:
-            model_name = "ESP32-S3";
-            break;
-        case CHIP_ESP32C3:
-            model_name = "ESP32-C3";
-            break;
-        case CHIP_ESP32C2:
-            model_name = "ESP32-C2";
-            break;
-        case CHIP_ESP32C6:
-            model_name = "ESP32-C6";
-            break;
-        case CHIP_ESP32H2:
-            model_name = "ESP32-H2";
-            break;
-        case CHIP_ESP32P4:
-            model_name = "ESP32-P4";
-            break;
-        case CHIP_ESP32C5:
-            model_name = "ESP32-C5";
-            break;
-        case CHIP_ESP32C61:
-            model_name = "ESP32-C61";
-            break;
-        default:
-            model_name = "Unknown";
-            break;
-    }
-    
-    unsigned major_rev = chip_info.revision / 100;
-    unsigned minor_rev = chip_info.revision % 100;
-    
     glog("Chip Information:\n");
-    glog("  Firmware: %s %s %s\n", GHOSTESP_NAME, GHOSTESP_FLAVOR, GHOSTESP_VERSION);
-#ifdef GIT_COMMIT_HASH
-    glog("  Git Commit: %s\n", GIT_COMMIT_HASH);
-#endif
-    glog("  Model: %s\n", model_name);
-    glog("  Revision: v%d.%d\n", major_rev, minor_rev);
-    glog("  CPU Cores: %d\n", chip_info.cores);
 
-    char features_str[256] = "";
-    bool first = true;
-    if (chip_info.features & CHIP_FEATURE_WIFI_BGN) {
-        strcat(features_str, "WiFi");
-        first = false;
-    }
-    if (chip_info.features & CHIP_FEATURE_BT) {
-        if (!first) strcat(features_str, "/");
-        strcat(features_str, "BT");
-        first = false;
-    }
-    if (chip_info.features & CHIP_FEATURE_BLE) {
-        if (!first) strcat(features_str, "/");
-        strcat(features_str, "BLE");
-        first = false;
-    }
-    if (chip_info.features & CHIP_FEATURE_IEEE802154) {
-        if (!first) strcat(features_str, "/");
-        strcat(features_str, "802.15.4");
-        first = false;
-    }
-    if (chip_info.features & CHIP_FEATURE_EMB_FLASH) {
-        if (!first) strcat(features_str, "/");
-        strcat(features_str, "Embedded Flash");
-        first = false;
-    }
-    if (chip_info.features & CHIP_FEATURE_EMB_PSRAM) {
-        if (!first) strcat(features_str, "/");
-        strcat(features_str, "Embedded PSRAM");
-        first = false;
-    }
-#ifdef CONFIG_USE_TOUCHSCREEN
-    if (!first) strcat(features_str, "/");
-    strcat(features_str, "Touchscreen");
-    first = false;
-#endif
-    if (first) {
-        strcat(features_str, "None");
-    }
-    glog("  Features: %s\n", features_str);
+    // The shared helper produces device info rows followed by a contiguous
+    // run of "Enabled Features" rows (each with value "Yes"). The CLI
+    // prints the two sections with different formatting, so we split at the
+    // first "Yes" row to keep the original output layout.
+    enum { CHIP_INFO_MAX_ROWS = 64 };
+    chip_info_line_t *rows = (chip_info_line_t *)calloc(CHIP_INFO_MAX_ROWS, sizeof(chip_info_line_t));
+    if (rows) {
+        int total = chip_info_collect_lines(rows, CHIP_INFO_MAX_ROWS);
 
-    glog("  Free Heap: %lu bytes\n", esp_get_free_heap_size());
-    glog("  Min Free Heap: %lu bytes\n", esp_get_minimum_free_heap_size());
-    glog("  IDF Version: %s\n", esp_get_idf_version());
-#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    glog("  Build Config: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
-#endif
+        int feature_start = total;
+        for (int i = 0; i < total; i++) {
+            if (strcmp(rows[i].value, "Yes") == 0) {
+                feature_start = i;
+                break;
+            }
+        }
 
-    glog("\n  Enabled Features:\n");
-#ifdef CONFIG_WITH_SCREEN
-    glog("    Display\n");
-#endif
-#ifdef CONFIG_USE_TOUCHSCREEN
-    glog("    Touchscreen\n");
-#endif
-#ifdef CONFIG_WITH_STATUS_DISPLAY
-    glog("    Status Display (OLED)\n");
-#endif
-#ifdef CONFIG_HAS_NFC
-    glog("    NFC\n");
-#endif
-#if defined(CONFIG_HAS_BADUSB) || defined(CONFIG_HAS_BADUSB_REMOTE)
-    glog("    BadUSB\n");
-#endif
-#if defined(CONFIG_HAS_NRF24) || defined(CONFIG_HAS_NRF24_REMOTE)
-    glog("    NRF24\n");
-#endif
-#if defined(CONFIG_HAS_SUBGHZ) || defined(CONFIG_HAS_SUBGHZ_REMOTE)
-    glog("    SubGHz\n");
-#endif
-#ifdef CONFIG_HAS_INFRARED
-    glog("    Infrared TX\n");
-#endif
-#ifdef CONFIG_HAS_INFRARED_RX
-    glog("    Infrared RX\n");
-#endif
-    glog("    GPS\n");
-#ifdef CONFIG_WITH_ETHERNET
-    glog("    Ethernet\n");
-#endif
-#ifdef CONFIG_HAS_BATTERY
-    glog("    Battery (Power Save)\n");
-#endif
-#ifdef CONFIG_HAS_BATTERY_ADC
-    glog("    Battery ADC\n");
-#endif
-#ifdef CONFIG_HAS_FUEL_GAUGE
-    glog("    Fuel Gauge\n");
-#endif
-#ifdef CONFIG_HAS_RTC_CLOCK
-    glog("    RTC Clock\n");
-#endif
-#ifdef CONFIG_HAS_COMPASS
-    glog("    Compass\n");
-#endif
-#ifdef CONFIG_HAS_ACCELEROMETER
-    glog("    Accelerometer\n");
-#endif
-#ifdef CONFIG_USE_JOYSTICK
-    glog("    Joystick\n");
-#endif
-#ifdef CONFIG_USE_CARDPUTER
-    glog("    Cardputer\n");
-#endif
-#ifdef CONFIG_USE_TDECK
-    glog("    T-Deck\n");
-#endif
-#ifdef CONFIG_USE_ENCODER
-    glog("    Rotary Encoder\n");
-#endif
-#ifdef CONFIG_USE_USB_KEYBOARD
-    glog("    USB Keyboard (Host)\n");
-#endif
-#ifdef CONFIG_IS_GHOST_BOARD
-    glog("    Ghost Board\n");
-#endif
-#ifdef CONFIG_IS_S3TWATCH
-    glog("    S3TWatch\n");
-#endif
-#ifdef CONFIG_USING_SPI
-    glog("    SD Card (SPI)\n");
-#endif
-#if defined(CONFIG_USING_MMC) || defined(CONFIG_USING_MMC_1_BIT)
-    glog("    SD Card (MMC)\n");
-#endif
-#ifdef CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
-    glog("    Core Dump\n");
-#endif
-    
+        for (int i = 0; i < feature_start; i++) {
+            glog("  %s: %s\n", rows[i].label, rows[i].value);
+        }
+
+        if (feature_start < total) {
+            glog("\n  Enabled Features:\n");
+            for (int i = feature_start; i < total; i++) {
+                glog("    %s\n", rows[i].label);
+            }
+        }
+
+        free(rows);
+    }
+
     glog("[CHIPINFO_END]\n");
-    
+
     status_display_show_status("Chip Info");
 }
 

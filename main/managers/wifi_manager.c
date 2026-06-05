@@ -1778,7 +1778,7 @@ void wifi_manager_stop_evil_portal_keep_wifi(void) {
 }
 
 bool wifi_manager_is_evil_portal_active(void) {
-    return evilportal_server != NULL;
+    return evilportal_server != NULL || dns_handle != NULL;
 }
 
 // Release scan result buffers - delegated to ap_scan module

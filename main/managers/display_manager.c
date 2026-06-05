@@ -265,6 +265,8 @@ static inline uint32_t get_tdeck_repeat_delay(void) {
     }
 }
 
+static void display_manager_flush_pending_scroll_if_due(void);
+
 static inline uint32_t get_tdeck_repeat_rate(void) {
     switch (settings_get_input_repeat_speed(&G_Settings)) {
         case 0: return 200;  // Slow
@@ -2974,6 +2976,13 @@ void processEvent() {
   InputEvent event;
 
   while (processed < max_events && xQueueReceive(input_queue, &event, 0) == pdTRUE) {
+    if (event.type == INPUT_TYPE_TOUCH && event.is_touch_move) {
+      InputEvent next_event;
+      while (xQueuePeek(input_queue, &next_event, 0) == pdTRUE &&
+             next_event.type == INPUT_TYPE_TOUCH && next_event.is_touch_move) {
+        xQueueReceive(input_queue, &event, 0);
+      }
+    }
     last_touch_time = xTaskGetTickCount();
     if (is_backlight_dimmed || is_backlight_off) {
       set_backlight_brightness(100);
@@ -3014,6 +3023,13 @@ void processEvent() {
 
   if (processed == 0) {
     if (xQueueReceive(input_queue, &event, pdMS_TO_TICKS(1)) == pdTRUE) {
+      if (event.type == INPUT_TYPE_TOUCH && event.is_touch_move) {
+        InputEvent next_event;
+        while (xQueuePeek(input_queue, &next_event, 0) == pdTRUE &&
+               next_event.type == INPUT_TYPE_TOUCH && next_event.is_touch_move) {
+          xQueueReceive(input_queue, &event, 0);
+        }
+      }
       last_touch_time = xTaskGetTickCount();
       if (is_backlight_dimmed || is_backlight_off) {
         set_backlight_brightness(100);
@@ -3048,13 +3064,14 @@ void processEvent() {
     }
   }
 
-  /* Apply any scroll deltas queued by the touch handlers in this tick. */
-  display_manager_flush_pending_scroll();
+  /* Apply live drag scroll at a steady frame budget instead of every input tick. */
+  display_manager_flush_pending_scroll_if_due();
 }
 
 /* ---- scroll coalescing ------------------------------------------------- */
 
 #define SCROLL_COALESCE_MAX_STEP 64
+#define SCROLL_FLUSH_INTERVAL_MS 33
 
 typedef struct {
   lv_obj_t *target;
@@ -3062,6 +3079,7 @@ typedef struct {
 } pending_scroll_t;
 
 static pending_scroll_t s_pending_scroll = { NULL, 0 };
+static TickType_t s_last_scroll_flush_tick = 0;
 
 void display_manager_queue_scroll(lv_obj_t *target, int32_t dy) {
   if (!target || dy == 0) return;
@@ -3079,9 +3097,20 @@ void display_manager_queue_scroll(lv_obj_t *target, int32_t dy) {
 void display_manager_flush_pending_scroll(void) {
   if (s_pending_scroll.target && s_pending_scroll.dy != 0) {
     lv_obj_scroll_by_bounded(s_pending_scroll.target, 0, s_pending_scroll.dy, LV_ANIM_OFF);
+    s_last_scroll_flush_tick = xTaskGetTickCount();
   }
   s_pending_scroll.target = NULL;
   s_pending_scroll.dy = 0;
+}
+
+static void display_manager_flush_pending_scroll_if_due(void) {
+  if (!s_pending_scroll.target || s_pending_scroll.dy == 0) return;
+
+  TickType_t now = xTaskGetTickCount();
+  if (s_last_scroll_flush_tick == 0 ||
+      now - s_last_scroll_flush_tick >= pdMS_TO_TICKS(SCROLL_FLUSH_INTERVAL_MS)) {
+    display_manager_flush_pending_scroll();
+  }
 }
 
 /* ---- touch drag state machine ---------------------------------------- */

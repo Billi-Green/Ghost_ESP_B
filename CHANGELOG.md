@@ -10,6 +10,7 @@
  - Added Ghostchi activity counters to state file
  - Added Wardriving settings for per-chip hop intervals and weighted 5GHz channel hopping, synced over GhostLink
  - Replaced on/off settings rows with iOS-style toggles for a slightly nicer feel
+ - Added Settings > Info with a read-only device, runtime, build, and credits page sourced from the `chipinfo` data path
  - Fixed Invert Colors setting not refreshing the screen until something else triggered a redraw
  - Added more Display Timeout options: 15s, 2m, and 5m
  - Slimmed and rounded the terminal's bottom touch controls to match the rest of the UI
@@ -21,7 +22,6 @@
  - Fixed `chameleon` (no args) double-printing its help on the on-screen terminal
  - Fixed `select -a 1,2,3` corrupting later `select` calls by switching to a re-entrant, non-mutating tokenizer
  - Stopped logging unknown commands to command history so typos no longer pollute arrow-up
- - Added per-subsystem progress logging to the `stop` command
  - Made command lookup case-insensitive (`SCANAP` now works)
  - Reduced `sd tree` walker memory from ~16 KB to ~600 B (no BSS) and made it work on devices without PSRAM
  - Made Ghostchi passive by default, added a passive/aggressive mode toggle on pages 1 & 2 of the Ghostchi view

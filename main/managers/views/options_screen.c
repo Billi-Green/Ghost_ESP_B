@@ -3,6 +3,8 @@
 #include "core/serial_manager.h"
 #include "core/commandline.h"
 #include "core/ouis.h"
+#include "core/chip_info.h"
+#include "core/ghostesp_version.h"
 #include "managers/display_manager.h"
 #include "gui/options_view.h"
 #include "core/screen_mirror.h"
@@ -35,6 +37,7 @@
 #include "scans/wifi/station_scan.h"
 #include "esp_timer.h"
 #include <stdint.h>
+#include <string.h>
 #include "core/dns_server.h"
 #include "esp_heap_caps.h"
 
@@ -429,6 +432,7 @@ static void ble_detect_set_subtext(int found_count) {
 uint32_t theme_palette_get_background(uint8_t theme);
 uint32_t theme_palette_get_surface_alt(uint8_t theme);
 uint32_t theme_palette_get_text(uint8_t theme);
+extern const lv_img_dsc_t ghostesplogo;
 
 
 #define KARMA_MAX_SSIDS 64
@@ -454,6 +458,7 @@ typedef enum {
     SETTINGS_CAT_ACCESSIBILITY,
     SETTINGS_CAT_LOCKSCREEN,
     SETTINGS_CAT_WARDRIVING,
+    SETTINGS_CAT_INFO,
     SETTINGS_CAT_COUNT
 } SettingsCategoryId;
 
@@ -465,6 +470,7 @@ typedef struct {
 } SettingsCategory;
 
 static SettingsCategory settings_categories[] = {
+    {"Info",           SETTINGS_CAT_INFO,          false, NULL},
     {"Display",        SETTINGS_CAT_DISPLAY,       false, NULL},
     {"Appearance",     SETTINGS_CAT_APPEARANCE,    false, NULL},
     {"LED & RGB",      SETTINGS_CAT_LED_RGB,       false, NULL},
@@ -490,6 +496,18 @@ static SettingsCategory settings_categories[] = {
 static int current_settings_category = -1;
 static int settings_submenu_depth = 0;
 
+// Cached chip-info cards for the read-only custom Info page.
+#define OPTIONS_INFO_CARDS_MAX 3
+static chip_info_card_t s_info_cards[OPTIONS_INFO_CARDS_MAX];
+static bool             s_info_detail_active = false;
+static lv_obj_t        *s_info_scroll = NULL;
+static lv_obj_t        *s_info_saved_menu_container = NULL;
+extern int selected_item_index;
+extern int num_items;
+extern lv_obj_t *menu_container;
+static lv_timer_t *menu_build_timer;
+static void update_scroll_buttons_visibility(void);
+
 static int settings_category_index_for_id(SettingsCategoryId cat_id) {
     int category_count = sizeof(settings_categories) / sizeof(settings_categories[0]);
     for (int i = 0; i < category_count; i++) {
@@ -506,6 +524,137 @@ static SettingsCategoryId current_settings_category_id(void) {
         return SETTINGS_CAT_COUNT;
     }
     return settings_categories[current_settings_category].id;
+}
+
+static lv_obj_t *options_info_add_label(lv_obj_t *parent, const char *text, const lv_font_t *font,
+                                        lv_text_align_t align, lv_coord_t pad_top) {
+    lv_obj_t *label = lv_label_create(parent);
+    lv_label_set_text(label, text ? text : "");
+    lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(label, LV_PCT(100));
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_set_style_text_align(label, align, 0);
+    lv_obj_set_style_text_line_space(label, 5, 0);
+    lv_obj_set_style_pad_top(label, pad_top, 0);
+    if (font) lv_obj_set_style_text_font(label, font, 0);
+    return label;
+}
+
+static void options_info_add_section(lv_obj_t *parent, const char *title, const char *body,
+                                     const lv_font_t *title_font, const lv_font_t *body_font,
+                                     lv_coord_t top_pad) {
+    lv_obj_t *heading = options_info_add_label(parent, title, title_font, LV_TEXT_ALIGN_CENTER, top_pad);
+    lv_obj_set_style_text_color(heading, lv_color_hex(0xA7D8FF), 0);
+
+    lv_obj_t *content = options_info_add_label(parent, body, body_font, LV_TEXT_ALIGN_LEFT, GUI_GRID);
+    lv_obj_set_style_text_color(content, lv_color_hex(0xE6E6E6), 0);
+}
+
+static const char *OPTIONS_INFO_CONTRIBUTORS =
+    "jaylikesbunda - project maintainer\n"
+    "Spooks4576 - original GhostESP developer\n"
+    "tototo31 - major project contributions\n"
+    "Play2BReal - recent project contributions\n"
+    "the1anonlypr3 - art and assets\n"
+    "Billi-Green - audio and ENV-III support";
+
+static const char *OPTIONS_INFO_UPSTREAM =
+    "JustCallMeKoKo / ESP32Marauder - foundational development\n"
+    "thibauts - CastV2 protocol insights\n"
+    "MarcoLucidi01 - DIAL protocol integration\n"
+    "SpacehuhnTech - reference deauthentication code\n"
+    "WillyJL - Flipper functionality and BLE Spam code\n"
+    "flipperdevices and contributors - core IR/NFC implementation\n"
+    "Garag - core NFC library\n"
+    "connornishijima / SensoryBridge - MIC RGB visualizer algorithms\n"
+    "DarkFlippers - SubGHz protocol decoders\n"
+    "xMasterX - SubGHz improvements";
+
+static void options_show_info_detail(void) {
+    if (!options_menu_view.root || !lv_obj_is_valid(options_menu_view.root)) return;
+
+    lvgl_timer_del_safe(&menu_build_timer);
+    if (s_info_scroll && lv_obj_is_valid(s_info_scroll)) {
+        lv_obj_del(s_info_scroll);
+        s_info_scroll = NULL;
+    }
+
+    s_info_saved_menu_container = menu_container;
+    if (s_info_saved_menu_container && lv_obj_is_valid(s_info_saved_menu_container)) {
+        lv_obj_add_flag(s_info_saved_menu_container, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    s_info_detail_active = true;
+    current_settings_category = -1;
+    settings_submenu_depth = 0;
+    selected_item_index = 0;
+    num_items = 0;
+    display_manager_add_status_bar("Info");
+
+    lv_obj_set_style_bg_color(options_menu_view.root, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(options_menu_view.root, LV_OPA_COVER, 0);
+
+    int content_h = LV_VER_RES - GUI_STATUS_BAR_H;
+#ifdef CONFIG_USE_TOUCHSCREEN
+    content_h -= 34;
+#endif
+    if (content_h < 80) content_h = LV_VER_RES - GUI_STATUS_BAR_H;
+
+    s_info_scroll = lv_obj_create(options_menu_view.root);
+    menu_container = s_info_scroll;
+    lv_obj_remove_style_all(s_info_scroll);
+    lv_obj_set_size(s_info_scroll, LV_HOR_RES, content_h);
+    lv_obj_align(s_info_scroll, LV_ALIGN_TOP_MID, 0, GUI_STATUS_BAR_H);
+    lv_obj_set_style_bg_color(s_info_scroll, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_info_scroll, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_left(s_info_scroll, GUI_SAFEAREA_HOR * 2, 0);
+    lv_obj_set_style_pad_right(s_info_scroll, GUI_SAFEAREA_HOR * 2, 0);
+    lv_obj_set_style_pad_top(s_info_scroll, GUI_GRID * 3, 0);
+    lv_obj_set_style_pad_bottom(s_info_scroll, GUI_GRID * 3, 0);
+    lv_obj_set_scroll_dir(s_info_scroll, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(s_info_scroll, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_flex_flow(s_info_scroll, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_info_scroll, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t *logo = lv_img_create(s_info_scroll);
+    lv_img_set_src(logo, &ghostesplogo);
+    lv_obj_set_style_img_recolor(logo, lv_color_white(), 0);
+    lv_obj_set_style_img_recolor_opa(logo, LV_OPA_0, 0);
+    lv_obj_set_style_pad_bottom(logo, GUI_GRID * 2, 0);
+    if (LV_HOR_RES <= 240 || LV_VER_RES <= 180) {
+        lv_img_set_zoom(logo, 180);
+    } else if (LV_HOR_RES <= 320) {
+        lv_img_set_zoom(logo, 220);
+    }
+
+    bool small = (LV_VER_RES <= 180 || LV_HOR_RES <= 240);
+    const lv_font_t *body_font = small ? &lv_font_montserrat_12 : &lv_font_montserrat_14;
+    const lv_font_t *heading_font = small ? &lv_font_montserrat_14 : &lv_font_montserrat_18;
+    const lv_font_t *credits_font = small ? &lv_font_montserrat_8 : &lv_font_montserrat_10;
+
+    options_info_add_label(s_info_scroll, GHOSTESP_VERSION, heading_font, LV_TEXT_ALIGN_CENTER, 0);
+
+    int count = chip_info_collect_cards(s_info_cards, OPTIONS_INFO_CARDS_MAX);
+    for (int i = 0; i < count; i++) {
+        options_info_add_section(s_info_scroll, s_info_cards[i].title, s_info_cards[i].body,
+                                 heading_font, body_font, GUI_GRID * 2);
+    }
+
+    options_info_add_section(s_info_scroll, "GhostESP Contributors", OPTIONS_INFO_CONTRIBUTORS,
+                             body_font, credits_font, GUI_GRID * 2);
+    options_info_add_section(s_info_scroll, "Upstream & References", OPTIONS_INFO_UPSTREAM,
+                             body_font, credits_font, GUI_GRID);
+
+    lv_obj_update_layout(s_info_scroll);
+    update_scroll_buttons_visibility();
+}
+
+static void options_info_scroll_step(int direction) {
+    if (!s_info_detail_active || !menu_container || !lv_obj_is_valid(menu_container)) return;
+    lv_coord_t amount = lv_obj_get_height(menu_container) / 2;
+    if (amount < 24) amount = 24;
+    lv_obj_scroll_by_bounded(menu_container, 0, direction * amount, LV_ANIM_OFF);
+    update_scroll_buttons_visibility();
 }
 
 typedef enum {
@@ -1657,6 +1806,7 @@ void options_menu_create() {
      * destroy/create to avoid expensive LVGL operations and watchdog starvation.
      */
     ESP_LOGI(TAG, "options_menu_create: SelectedMenuType=%d (%s)", SelectedMenuType, options_menu_type_to_string(SelectedMenuType));
+    s_info_detail_active = false;
     
     // Reset WiFi menu state when entering from main menu to ensure clean entry
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state != WIFI_MENU_MAIN) {
@@ -2736,6 +2886,43 @@ void handle_hardware_button_press_options(InputEvent *event) {
         return;
     }
 
+    if (s_info_detail_active && event->type != INPUT_TYPE_TOUCH) {
+        if (event->type == INPUT_TYPE_EXIT_BUTTON) {
+            back_event_cb(NULL);
+            return;
+        }
+        if (event->type == INPUT_TYPE_JOYSTICK) {
+            int button = event->data.joystick_index;
+            if (button == 2) {
+                options_info_scroll_step(1);
+            } else if (button == 4) {
+                options_info_scroll_step(-1);
+            } else if (button == 0 || button == 1) {
+                back_event_cb(NULL);
+            }
+            return;
+        }
+        if (event->type == INPUT_TYPE_KEYBOARD) {
+            uint8_t key = event->data.key_value;
+            if (key == LV_KEY_UP || key == 'k' || key == ';' || key == ',' || key == 44) {
+                options_info_scroll_step(1);
+            } else if (key == LV_KEY_DOWN || key == 'j' || key == '.' || key == '/' || key == 46 || key == 47) {
+                options_info_scroll_step(-1);
+            } else if (key == LV_KEY_LEFT || key == LV_KEY_ESC || key == 29 || key == '`' || key == 'h') {
+                back_event_cb(NULL);
+            }
+            return;
+        }
+        if (event->type == INPUT_TYPE_ENCODER) {
+            if (event->data.encoder.button) {
+                back_event_cb(NULL);
+            } else if (event->data.encoder.direction != 0) {
+                options_info_scroll_step(event->data.encoder.direction > 0 ? -1 : 1);
+            }
+            return;
+        }
+    }
+
     if (event->type == INPUT_TYPE_TOUCH) {
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
@@ -2917,6 +3104,10 @@ void handle_hardware_button_press_options(InputEvent *event) {
                     !settings_get_touch_drag_scroll(&G_Settings) && release_dy) {
                     display_manager_queue_scroll(release_target, release_dy);
                 }
+                return;
+            }
+
+            if (s_info_detail_active) {
                 return;
             }
 
@@ -3945,24 +4136,26 @@ void option_event_cb(lv_event_t *e) {
     lvgl_timer_del_safe(&menu_build_timer);
     
     if (is_settings_mode) {
-        const char *udata = (const char *)lv_event_get_user_data(e);
+        void *raw_udata = lv_event_get_user_data(e);
+        const char *udata = (const char *)raw_udata;
 
         /* ---------- settings ROOT ("Display", "Config") ---------- */
         if (current_settings_category < 0) {
-            int cat_idx = (int)(intptr_t)udata;
+            int cat_idx = (int)(intptr_t)raw_udata;
             switch_to_settings_category(cat_idx);
             option_invoked = false;
             return;
         }
 
         /* ---------- settings SUBMENU ---------- */
+
         if (udata && strcmp(udata, "__BACK_OPTION__") == 0) {
             back_event_cb(NULL);
             option_invoked = false;
             return;
         }
 
-        int setting_index = (int)(intptr_t)udata;
+        int setting_index = (int)(intptr_t)raw_udata;
 #ifdef CONFIG_USE_IO_EXPANDER
         if (setting_index == IO_BTN_EDIT_P10 || setting_index == IO_BTN_EDIT_P11 || setting_index == IO_BTN_EDIT_P12) {
             io_btn_being_edited = (setting_index == IO_BTN_EDIT_P10) ? 0 : (setting_index == IO_BTN_EDIT_P11) ? 1 : 2;
@@ -5971,6 +6164,7 @@ void options_menu_destroy() {
     lvgl_obj_del_safe(&scroll_up_btn);
     lvgl_obj_del_safe(&scroll_down_btn);
     lvgl_obj_del_safe(&touch_bar);
+    lvgl_obj_del_safe(&s_info_scroll);
 
     // Delete the root object (deletes all children recursively)
     lvgl_obj_del_safe(&options_menu_view.root);
@@ -5985,11 +6179,14 @@ void options_menu_destroy() {
     scroll_up_btn = NULL;
     scroll_down_btn = NULL;
     touch_bar = NULL;
+    s_info_scroll = NULL;
+    s_info_saved_menu_container = NULL;
 
     // Reset state variables
     selected_item_index = 0;
     num_items = 0;
     current_settings_category = -1;
+    s_info_detail_active = false;
     // note: wifi/bluetooth/dualcomm submenu states are intentionally NOT reset here
     // so when returning from terminal view, we resume at the correct submenu
 
@@ -6142,6 +6339,23 @@ static void back_event_cb(lv_event_t *e) {
     // Save settings when exiting options menu
     if (is_settings_mode) {
         settings_save(&G_Settings);
+    }
+
+    if (s_info_detail_active) {
+        s_info_detail_active = false;
+        if (s_info_scroll && lv_obj_is_valid(s_info_scroll)) {
+            lv_obj_del(s_info_scroll);
+        }
+        s_info_scroll = NULL;
+        if (s_info_saved_menu_container && lv_obj_is_valid(s_info_saved_menu_container)) {
+            lv_obj_clear_flag(s_info_saved_menu_container, LV_OBJ_FLAG_HIDDEN);
+            menu_container = s_info_saved_menu_container;
+        }
+        s_info_saved_menu_container = NULL;
+        current_settings_category = -1;
+        settings_submenu_depth = 0;
+        rebuild_current_menu();
+        return;
     }
 
     if (wigle_help_popup && lv_obj_is_valid(wigle_help_popup)) {
@@ -8462,6 +8676,11 @@ static void switch_to_settings_category(int cat_idx) {
                  "interpreting as Back action",
                  cat_idx, category_count - 1);
         back_event_cb(NULL);
+        return;
+    }
+
+    if (settings_categories[cat_idx].id == SETTINGS_CAT_INFO) {
+        options_show_info_detail();
         return;
     }
 

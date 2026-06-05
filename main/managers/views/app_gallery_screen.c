@@ -1168,7 +1168,7 @@ static void handle_keyboard_interactions(int keyValue){
  */
 void apps_menu_event_handler(InputEvent *event) {
     if (event->type == INPUT_TYPE_TOUCH) {
-        ESP_LOGW(TAG, "Touch event");
+        ESP_LOGD(TAG, "Touch event");
         lv_indev_data_t *data = &event->data.touch_data;
         if (data->state == LV_INDEV_STATE_PR) {
             if (!touch_started) {
