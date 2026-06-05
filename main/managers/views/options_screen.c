@@ -39,10 +39,13 @@
 #include <stdint.h>
 #include <string.h>
 #include "core/dns_server.h"
+#include "vendor/pcap.h"
 #include "esp_heap_caps.h"
+#include <dirent.h>
 
 #define PORTAL_PAGE_SIZE 8    /* keep portal pages small to avoid LVGL stalls */
 #define WIGLE_CSV_PAGE_SIZE 8
+#define PCAP_CAPTURE_PAGE_SIZE 8
 
 static detail_view_t *sinkhole_detail_view = NULL;
 static void sinkhole_detail_back_cb(lv_event_t *e);
@@ -59,6 +62,10 @@ static char *wigle_csv_names = NULL;
 static const char **wigle_csv_options = NULL;
 static int wigle_csv_page_offset = 0;
 static bool wigle_csv_has_next_page = false;
+
+static char *pcap_capture_names = NULL;
+static const char **pcap_capture_options = NULL;
+static int pcap_capture_page_offset = 0;
 
 static char *blocklist_file_names = NULL;
 static const char **blocklist_file_options = NULL;
@@ -679,7 +686,8 @@ typedef enum {
     WIFI_MENU_DNS_SINKHOLE,
     WIFI_MENU_DNS_SINKHOLE_DOWNLOAD,
     WIFI_MENU_DNS_SINKHOLE_FILE_PICK,
-    WIFI_MENU_DNS_SINKHOLE_DETAILS
+    WIFI_MENU_DNS_SINKHOLE_DETAILS,
+    WIFI_MENU_CAPTURE_BROWSER
 } WifiMenuState;
 
 static WifiMenuState current_wifi_menu_state = WIFI_MENU_MAIN;
@@ -737,7 +745,7 @@ static const char * const wifi_capture_options[] = {
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     "Capture 802.15.4", "Capture 802.15.4 (Channel)",
 #endif
-    "Listen for Probes", NULL
+    "Listen for Probes", "On-device Captures", "Export PCAP hc22000", NULL
 };
 
 static const char * const wifi_scan_select_options[] = {
@@ -1630,6 +1638,8 @@ static void dual_comm_traceroute_kb_cb(const char *text);
 static void dual_comm_http_request_kb_cb(const char *text);
 static void wigle_csv_free_cache(void);
 static const char **wigle_csv_load_page(void);
+static void pcap_capture_free_cache(void);
+static const char **pcap_capture_load_page(void);
 static void wigle_show_csv_details_popup(const char *filename);
 #ifdef CONFIG_USE_IO_EXPANDER
 static void iobtn_p10_kb_cb(const char *text);
@@ -1902,6 +1912,9 @@ void options_menu_create() {
                 break;
             case WIFI_MENU_STA_MULTI_SELECT:
                 options = sta_multi_select_get_options();
+                break;
+            case WIFI_MENU_CAPTURE_BROWSER:
+                options = pcap_capture_load_page();
                 break;
         }
         break;
@@ -3174,6 +3187,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 current_wifi_menu_state == WIFI_MENU_AP_LIST ||
                 current_wifi_menu_state == WIFI_MENU_STA_LIST ||
                 current_wifi_menu_state == WIFI_MENU_SCANALL_LIST ||
+                current_wifi_menu_state == WIFI_MENU_CAPTURE_BROWSER ||
                 (SelectedMenuType == OT_Bluetooth &&
                  current_bluetooth_menu_state == BLUETOOTH_MENU_DETECT_LIST) ||
                 SelectedMenuType == OT_WigleManualUpload) {
@@ -4950,6 +4964,46 @@ void option_event_cb(lv_event_t *e) {
             option_invoked = false;
             return;
         }
+
+        if (current_wifi_menu_state == WIFI_MENU_CAPTURE &&
+            (strcmp(Selected_Option, "On-device Captures") == 0 ||
+             strcmp(Selected_Option, "Export PCAP hc22000") == 0)) {
+            pcap_capture_page_offset = 0;
+            current_wifi_menu_state = WIFI_MENU_CAPTURE_BROWSER;
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+
+        if (current_wifi_menu_state == WIFI_MENU_CAPTURE_BROWSER) {
+            if (strcmp(Selected_Option, "No PCAP files found") == 0) {
+                option_invoked = false;
+                return;
+            }
+            if (strcmp(Selected_Option, "Next >") == 0) {
+                pcap_capture_page_offset += PCAP_CAPTURE_PAGE_SIZE;
+                rebuild_current_menu();
+                option_invoked = false;
+                return;
+            }
+            if (strcmp(Selected_Option, "< Prev") == 0) {
+                pcap_capture_page_offset -= PCAP_CAPTURE_PAGE_SIZE;
+                if (pcap_capture_page_offset < 0) pcap_capture_page_offset = 0;
+                rebuild_current_menu();
+                option_invoked = false;
+                return;
+            }
+
+            const char *file_name = strchr(Selected_Option, ' ');
+            file_name = file_name ? file_name + 1 : Selected_Option;
+            char cmd[96];
+            snprintf(cmd, sizeof(cmd), "capture -export %s", file_name);
+            terminal_set_return_view(&options_menu_view);
+            display_manager_switch_view(&terminal_view);
+            simulateCommand(cmd);
+            view_switched = true;
+            return;
+        }
     }
 
     // --- Bluetooth submenu navigation ---
@@ -6437,6 +6491,14 @@ static void back_event_cb(lv_event_t *e) {
         rebuild_current_menu();
         return;
     }
+    // If in capture browser, go back to Capture menu
+    if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_CAPTURE_BROWSER) {
+        pcap_capture_page_offset = 0;
+        pcap_capture_free_cache();
+        current_wifi_menu_state = WIFI_MENU_CAPTURE;
+        rebuild_current_menu();
+        return;
+    }
     // If in AP multi-select view, confirm selection and go back to Scan & Select menu
     if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_AP_MULTI_SELECT) {
         ap_multi_select_confirm();
@@ -6563,6 +6625,105 @@ static const char **wigle_csv_load_page(void) {
 
     free(file_names);
     return wigle_csv_options;
+}
+
+static void pcap_capture_free_cache(void) {
+    if (pcap_capture_names) { free(pcap_capture_names); pcap_capture_names = NULL; }
+    if (pcap_capture_options) { free(pcap_capture_options); pcap_capture_options = NULL; }
+}
+
+static const char **pcap_capture_load_page(void) {
+    static const char *empty[] = {"No PCAP files found", NULL};
+
+    pcap_capture_free_cache();
+
+    static const char *pcap_dirs[] = {
+        "/mnt/ghostesp/pcaps",
+        "/mnt/ghostesp/ghostchi/pcaps",
+    };
+#define PCAP_NDIRS (sizeof(pcap_dirs) / sizeof(pcap_dirs[0]))
+
+    int dir_counts[PCAP_NDIRS] = {0};
+    int total_files = 0;
+
+    for (int d = 0; d < (int)PCAP_NDIRS; d++) {
+        DIR *dir = opendir(pcap_dirs[d]);
+        if (!dir) continue;
+        struct dirent *entry;
+        while ((entry = readdir(dir)) != NULL) {
+            size_t len = strlen(entry->d_name);
+            if (len >= 6 && strcmp(entry->d_name + len - 5, ".pcap") == 0)
+                dir_counts[d]++;
+        }
+        closedir(dir);
+        total_files += dir_counts[d];
+    }
+
+    if (total_files == 0) return empty;
+
+    bool show_prev = (pcap_capture_page_offset > 0);
+    bool show_next = (pcap_capture_page_offset + PCAP_CAPTURE_PAGE_SIZE < total_files);
+    int page_count = total_files - pcap_capture_page_offset;
+    if (page_count > PCAP_CAPTURE_PAGE_SIZE) page_count = PCAP_CAPTURE_PAGE_SIZE;
+    if (page_count < 0) page_count = 0;
+    int total = (show_prev ? 1 : 0) + page_count + (show_next ? 1 : 0);
+
+    if (total == 0) return empty;
+
+    pcap_capture_names = malloc(MAX_FILE_NAME_LENGTH * (size_t)total);
+    pcap_capture_options = malloc(sizeof(char *) * ((size_t)total + 1));
+    if (!pcap_capture_names || !pcap_capture_options) {
+        pcap_capture_free_cache();
+        return empty;
+    }
+
+    int idx = 0;
+    if (show_prev) {
+        strcpy(pcap_capture_names + idx * MAX_FILE_NAME_LENGTH, "< Prev");
+        pcap_capture_options[idx] = pcap_capture_names + idx * MAX_FILE_NAME_LENGTH;
+        idx++;
+    }
+
+    int remaining = pcap_capture_page_offset;
+    int filled = 0;
+    for (int d = 0; d < (int)PCAP_NDIRS && filled < page_count; d++) {
+        if (dir_counts[d] == 0) continue;
+        if (remaining >= dir_counts[d]) {
+            remaining -= dir_counts[d];
+            continue;
+        }
+        char (*page_names)[MAX_PORTAL_NAME] = malloc(PCAP_CAPTURE_PAGE_SIZE * MAX_PORTAL_NAME);
+        if (!page_names) break;
+        int need = page_count - filled;
+        int offset_in_dir = remaining;
+        remaining = 0;
+        int got = sd_card_list_dir_paged(pcap_dirs[d], ".pcap",
+                                          offset_in_dir, need,
+                                          page_names, NULL);
+        if (got < 0) got = 0;
+        for (int i = 0; i < got && filled < page_count; i++) {
+            char full_path[MAX_FILE_NAME_LENGTH];
+            snprintf(full_path, sizeof(full_path), "%s/%s", pcap_dirs[d], page_names[i]);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-truncation"
+            snprintf(pcap_capture_names + idx * MAX_FILE_NAME_LENGTH, MAX_FILE_NAME_LENGTH,
+                     "%s %s", pcap_has_hc22000_material(full_path) ? LV_SYMBOL_OK : LV_SYMBOL_CLOSE, full_path);
+#pragma GCC diagnostic pop
+            pcap_capture_options[idx] = pcap_capture_names + idx * MAX_FILE_NAME_LENGTH;
+            idx++;
+            filled++;
+        }
+        free(page_names);
+    }
+
+    if (show_next) {
+        strcpy(pcap_capture_names + idx * MAX_FILE_NAME_LENGTH, "Next >");
+        pcap_capture_options[idx] = pcap_capture_names + idx * MAX_FILE_NAME_LENGTH;
+        idx++;
+    }
+    pcap_capture_options[idx] = NULL;
+
+    return pcap_capture_options;
 }
 
 static int ap_list_load_fn(int offset, int page_size, char names[][PAGED_MENU_NAME_MAX], bool *has_more, void *user_data) {
@@ -8545,6 +8706,10 @@ static void rebuild_current_menu(void) {
                     break;
                 case WIFI_MENU_STA_MULTI_SELECT:
                     options = sta_multi_select_get_options();
+                    timer_period = 25;
+                    break;
+                case WIFI_MENU_CAPTURE_BROWSER:
+                    options = pcap_capture_load_page();
                     timer_period = 25;
                     break;
             }

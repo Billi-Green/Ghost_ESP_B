@@ -224,6 +224,65 @@ void handle_camerastream_cmd(int argc, char **argv);
 
 #define MAX_PORTAL_PATH_LEN 128 // reasonable i guess?
 
+static void capture_resolve_pcap_path(const char *arg, char *out, size_t out_len) {
+    if (!arg || !out || out_len == 0) return;
+    if (arg[0] == '/' || strchr(arg, '/')) {
+        snprintf(out, out_len, "%s", arg);
+    } else {
+        snprintf(out, out_len, "/mnt/ghostesp/pcaps/%s", arg);
+    }
+}
+
+static int capture_list_dir(const char *dir_path) {
+    DIR *dir = opendir(dir_path);
+    if (!dir) return 0;
+
+    int count = 0;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        size_t len = strlen(entry->d_name);
+        if (len < 6 || strcmp(entry->d_name + len - 5, ".pcap") != 0) continue;
+        char name[MAX_FILE_NAME_LENGTH - 21];
+        strncpy(name, entry->d_name, sizeof(name) - 1);
+        name[sizeof(name) - 1] = '\0';
+        char path[MAX_FILE_NAME_LENGTH];
+        snprintf(path, sizeof(path), "%s/%s", dir_path, name);
+        glog("  [%s] %s\n", pcap_has_hc22000_material(path) ? "+" : "-", name);
+        count++;
+    }
+    closedir(dir);
+    return count;
+}
+
+static void handle_capture_list(void) {
+    glog("On-device captures:\n");
+    int count = capture_list_dir("/mnt/ghostesp/pcaps");
+    count += capture_list_dir("/mnt/ghostesp/ghostchi/pcaps");
+    if (count == 0) glog("  No .pcap files found.\n");
+}
+
+static void handle_capture_export(const char *arg) {
+    char in_path[MAX_FILE_NAME_LENGTH];
+    char out_path[MAX_FILE_NAME_LENGTH];
+    int pmkid = 0;
+    int handshakes = 0;
+
+    capture_resolve_pcap_path(arg, in_path, sizeof(in_path));
+    esp_err_t err = pcap_export_hc22000(in_path, out_path, sizeof(out_path), &pmkid, &handshakes);
+    if (err == ESP_ERR_NOT_FOUND) {
+        glog("No PMKID or M2/M3 handshakes found in %s\n", in_path);
+        status_display_show_status("No Handshake");
+        return;
+    }
+    if (err != ESP_OK) {
+        glog("hc22000 export failed for %s (err=%d)\n", in_path, err);
+        status_display_show_status("Export Fail");
+        return;
+    }
+    glog("Exported %s\nPMKID: %d  M2/M3: %d\n", out_path, pmkid, handshakes);
+    status_display_show_status("Export hc22000");
+}
+
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -1759,6 +1818,24 @@ void handle_capture_scan(int argc, char **argv) {
         status_display_show_status("Capture Empty");
         return;
     }
+
+    if (strcmp(capturetype, "-list") == 0) {
+        if (argc != 2) {
+            glog("Usage: capture -list\n");
+            return;
+        }
+        handle_capture_list();
+        return;
+    }
+
+    if (strcmp(capturetype, "-export") == 0) {
+        if (argc != 3) {
+            glog("Usage: capture -export <pcap-file>\n");
+            return;
+        }
+        handle_capture_export(argv[2]);
+        return;
+    }
     
     // Parse channel parameter if present
     uint8_t fixed_channel = 0;
@@ -1969,6 +2046,8 @@ void handle_capture_scan(int argc, char **argv) {
         strcmp(capturetype, "-eapol") != 0 &&
         strcmp(capturetype, "-pwn") != 0 &&
         strcmp(capturetype, "-wps") != 0 &&
+        strcmp(capturetype, "-list") != 0 &&
+        strcmp(capturetype, "-export") != 0 &&
         strcmp(capturetype, "-wireshark") != 0 &&
         strcmp(capturetype, "-stop") != 0
 #ifndef CONFIG_IDF_TARGET_ESP32S2
@@ -4707,6 +4786,9 @@ void handle_help(int argc, char **argv) {
         glog("        -raw       : Start Capturing Raw Packets\n");
         glog("        -wps       : Start Capturing WPS Packets and there Auth Type\n");
         glog("        -pwn       : Start Capturing Pwnagotchi Packets\n");
+        glog("        -list      : Browse saved PCAPs with +/- hc22000 markers\n");
+        glog("        -export    : Export PCAP to hc22000 (PMKID + M2/M3)\n");
+        glog("                    Usage: capture -export <pcap-file>\n");
         glog("        -wireshark : Stream raw PCAP to USB/UART for Wireshark\n");
         glog("                    Usage: capture -wireshark [-c <channel>]\n");
         glog("                    -c <channel>: Lock to specific channel (1-%d)\n", MAX_WIFI_CHANNEL);
@@ -4718,9 +4800,9 @@ void handle_help(int argc, char **argv) {
         glog("    Start a WiFi packet capture.\n");
         glog("    Usage: capture [OPTION]\n");
         #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -802154, -stop\n\n");
+        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -list, -export, -802154, -stop\n\n");
         #else
-        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -stop\n\n");
+        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -list, -export, -stop\n\n");
         #endif
         return;
     }
