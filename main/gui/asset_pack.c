@@ -119,12 +119,25 @@ static bool s_skip_icon_preload_once = false;
 static volatile bool s_defer_icon_loads = false;
 static volatile bool s_deferred_icon_preload_running = false;
 static uint64_t s_failed_path_hashes[ASSET_PACK_FAILED_PATH_MAX];
+static asset_pack_progress_cb_t s_progress_cb = NULL;
+static void *s_progress_user = NULL;
+static uint32_t s_extract_total = 0;
+static uint32_t s_extract_current = 0;
 
 static esp_err_t extract_gtheme_to_dir(const char *archive_path, const char *out_dir);
 static void scan_installed_packs(void);
 static bool mkdir_parent_dirs(const char *path);
 static void start_deferred_icon_preload(void);
 static uint64_t hash_path(const char *path);
+
+void asset_pack_set_progress_cb(asset_pack_progress_cb_t cb, void *user) {
+    s_progress_cb = cb;
+    s_progress_user = user;
+}
+
+static void emit_progress(float pct, const char *stage) {
+    if (s_progress_cb) s_progress_cb(pct, stage, s_progress_user);
+}
 
 static void detect_psram_and_configure(void) {
     if (s_icon_cache != NULL) return;
@@ -858,8 +871,16 @@ static esp_err_t extract_gtheme_to_dir(const char *archive_path, const char *out
         return ESP_ERR_INVALID_SIZE;
     }
     ESP_LOGI(TAG, "extracting gtheme %s (%lu files)", archive_path, (unsigned long)file_count);
+    s_extract_total = file_count;
+    s_extract_current = 0;
+    emit_progress(30.0f, "Extracting theme");
 
     for (uint32_t i = 0; i < file_count; ++i) {
+        s_extract_current = i;
+        if (s_progress_cb && file_count > 0) {
+            float pct = 30.0f + ((float)i * 20.0f) / (float)file_count;
+            emit_progress(pct, "Extracting theme");
+        }
         if (!read_exact(f, hdr, sizeof(hdr)) || memcmp(hdr, "FILE", 4) != 0) {
             fclose(f);
             ESP_LOGE(TAG, "invalid gtheme entry header at index %lu", (unsigned long)i);
@@ -1117,14 +1138,19 @@ static void start_deferred_icon_preload(void) {
 }
 
 static esp_err_t asset_pack_load_active_impl(void) {
+    s_extract_total = 0;
+    s_extract_current = 0;
+    emit_progress(0.0f, "Scanning packs");
     detect_psram_and_configure();
     scan_installed_packs();
+    emit_progress(10.0f, "Selecting pack");
     s_loading_attempted = true;
     esp_err_t select_err = select_pack_for_load();
     if (select_err != ESP_OK) {
         clear_runtime();
         return select_err;
     }
+    emit_progress(50.0f, "Parsing manifest");
 
     char manifest_path[192];
     int manifest_len = snprintf(manifest_path, sizeof(manifest_path), "%s/manifest.json", s_pack_dir);
@@ -1219,7 +1245,9 @@ static esp_err_t asset_pack_load_active_impl(void) {
     cJSON_Delete(root);
     s_loaded = true;
     s_version++;
+    emit_progress(60.0f, "Loading icons");
     preload_loaded_assets();
+    emit_progress(90.0f, "Baking background");
     ESP_LOGI(TAG, "loaded asset pack '%s': %d icon mappings (v%lu)", s_active_name, s_icon_count, (unsigned long)s_version);
     return ESP_OK;
 }
@@ -1234,6 +1262,7 @@ esp_err_t asset_pack_load_active(void) {
     s_skip_icon_preload_once = false;
     if (err == ESP_OK) {
         (void)asset_pack_get_background_fullscreen();
+        emit_progress(100.0f, "Asset pack ready");
     }
     asset_sd_end(mounted_here, display_suspended);
     return err;

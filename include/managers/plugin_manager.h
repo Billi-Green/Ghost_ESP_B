@@ -113,6 +113,11 @@ bool plugin_manager_target_matches(const plugin_app_manifest_t *app);
 bool plugin_manager_reset_app_state(const char *id);
 const char *plugin_manager_last_error(void);
 
+/* Boot-time progress reporting. Callback is invoked on the calling task at
+ * the start of plugin_manager_reload and at completion. Pass NULL to clear. */
+typedef void (*plugin_manager_progress_cb_t)(float pct, int files_scanned, int files_total, void *user);
+void plugin_manager_set_progress_cb(plugin_manager_progress_cb_t cb, void *user);
+
 #ifdef __cplusplus
 }
 #endif

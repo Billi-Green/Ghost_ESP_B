@@ -12,6 +12,7 @@
 #include "managers/settings_manager.h"
 #include "managers/wifi_manager.h"
 #include "gui/asset_pack.h"
+#include "managers/plugin_manager.h"
 #include "esp_wifi.h"
 #include "core/esp_comm_manager.h"
 #include "managers/status_display_manager.h"
@@ -78,6 +79,22 @@
 static void apply_main_menu_background_cb(void *arg) {
     (void)arg;
     gui_screen_apply_background(main_menu_view.root);
+}
+
+static void splash_asset_pack_progress_cb(float pct, const char *stage, void *user) {
+    (void)user;
+    splash_set_progress(pct, stage);
+}
+
+static void splash_plugin_progress_cb(float pct, int files_scanned, int files_total, void *user) {
+    (void)files_scanned;
+    (void)files_total;
+    (void)user;
+    if (pct < 0.0f) {
+        splash_set_progress(-1.0f, "Checking apps");
+    } else {
+        splash_set_progress(pct, "Checking apps");
+    }
 }
 #endif
 
@@ -350,25 +367,93 @@ cleanup:
 }
 #endif
 
+#ifdef CONFIG_WITH_SCREEN
+// Boot-time completion coordination. The SD/asset-pack step and the
+// (fat-stack) plugin-discovery step run on separate tasks; the splash only
+// fades out once both have finished. The mask is updated under a spinlock
+// so the two tasks can race to be the last finisher.
+static portMUX_TYPE s_boot_done_mux = portMUX_INITIALIZER_UNLOCKED;
+static volatile uint32_t s_boot_done_mask = 0;
+#define BOOT_DONE_SD_ASSET  (1u << 0)
+#define BOOT_DONE_PLUGIN    (1u << 1)
+#define BOOT_DONE_ALL       (BOOT_DONE_SD_ASSET | BOOT_DONE_PLUGIN)
+
+static void splash_boot_step_done(uint32_t step) {
+    uint32_t now;
+    portENTER_CRITICAL(&s_boot_done_mux);
+    s_boot_done_mask |= step;
+    now = s_boot_done_mask;
+    portEXIT_CRITICAL(&s_boot_done_mux);
+    if (now == BOOT_DONE_ALL) {
+        splash_set_progress(100.0f, "Ready");
+        splash_signal_completion();
+    }
+}
+#endif
+
+static void boot_app_discovery_task(void *arg) {
+    (void)arg;
+#ifdef CONFIG_WITH_SCREEN
+    plugin_manager_set_progress_cb(splash_plugin_progress_cb, NULL);
+    splash_set_progress(-1.0f, "Checking apps...");
+#endif
+    if (plugin_manager_reload() < 0) {
+        ESP_LOGW(TAG, "Boot plugin reload failed: %s", plugin_manager_last_error());
+    }
+#ifdef CONFIG_WITH_SCREEN
+    plugin_manager_set_progress_cb(NULL, NULL);
+    splash_boot_step_done(BOOT_DONE_PLUGIN);
+#endif
+    vTaskDelete(NULL);
+}
+
 static void deferred_sd_init_task(void *arg) {
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    // Short initial delay: the splash holds the screen during boot work, so we
+    // only need enough time for splash_create to render the progress bar.
+    vTaskDelay(pdMS_TO_TICKS(200));
     ESP_LOGI(TAG, "Deferred SD Card init starting");
+
+#ifdef CONFIG_WITH_SCREEN
+    splash_set_progress(-1.0f, "Mounting SD card...");
+#endif
     if (sd_card_init() != ESP_OK) {
         ESP_LOGW(TAG, "Deferred SD Card init failed, skipping coredump autosave");
+#ifdef CONFIG_WITH_SCREEN
+        splash_set_progress(100.0f, "SD unavailable");
+        splash_signal_completion();
+#endif
         vTaskDelete(NULL);
         return;
     }
+
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
+#ifdef CONFIG_WITH_SCREEN
+    splash_set_progress(-1.0f, "Saving core dump...");
+#endif
     coredump_autosave_on_boot();
 #endif
+
 #ifdef CONFIG_WITH_SCREEN
+    asset_pack_set_progress_cb(splash_asset_pack_progress_cb, NULL);
+    splash_set_progress(0.0f, "Loading asset pack...");
     esp_err_t asset_err = asset_pack_load_active();
+    asset_pack_set_progress_cb(NULL, NULL);
     if (asset_err != ESP_OK && asset_err != ESP_ERR_NOT_FOUND) {
         ESP_LOGW(TAG, "Active asset pack load failed: %s", esp_err_to_name(asset_err));
     }
     if (asset_err == ESP_OK) {
         display_manager_run_on_lvgl(apply_main_menu_background_cb, NULL);
     }
+
+    // Hand off app discovery to its own task so the GAPP inflate can use
+    // the same fat stack the Apps menu allocates (32K PSRAM). The SD Init
+    // task stays at 6K — the inflate overflows that. The splash holds
+    // until both this step and BOOT_DONE_PLUGIN are signalled.
+    if (!xTaskCreate(boot_app_discovery_task, "BootApps", 32768,
+                     NULL, 5, NULL)) {
+        ESP_LOGW(TAG, "Boot app discovery task alloc failed; skipping");
+    }
+    splash_boot_step_done(BOOT_DONE_SD_ASSET);
 #endif
     vTaskDelete(NULL);
 }
@@ -620,8 +705,11 @@ void app_main(void) {
 #endif
 
     // Deferred SD card init: run in a background task so the shared-SPI
-    // suspend/resume does not freeze the splash-screen animation.  The task
-    // sleeps long enough for the splash transition (900 ms hold + margin).
+    // suspend/resume does not freeze the splash. The splash persists with a
+    // progress bar until splash_signal_completion() fires (or a hard timeout
+    // in splash_screen.c kicks in). The fat stack needed by GAPP inflate is
+    // handled by the separate boot_app_discovery_task spawned from inside
+    // deferred_sd_init_task.
     {
         BaseType_t sd_task_rc = xTaskCreate(deferred_sd_init_task, "SD Init", 6144, NULL,
                                             tskIDLE_PRIORITY + 1, NULL);

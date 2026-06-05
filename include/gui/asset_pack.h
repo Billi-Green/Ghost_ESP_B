@@ -38,3 +38,12 @@ bool asset_pack_background_should_scale(void);
  * with the tile pre-blitted into it, or NULL if no PSRAM / no tile / unsupported.
  * Drawing this is a single LV_IMG_CF_TRUE_COLOR blit with no per-frame tiling. */
 const lv_img_dsc_t *asset_pack_get_background_fullscreen(void);
+
+/* Boot-time progress reporting. Callback is invoked on the calling task
+ * (typically the deferred SD init task) at coarse checkpoints during
+ * asset_pack_load_active_impl and per-file during GTHEME extraction.
+ *
+ * Percentages are normalized to the asset pack load step (0-100).
+ * Pass NULL to clear. */
+typedef void (*asset_pack_progress_cb_t)(float pct, const char *stage, void *user);
+void asset_pack_set_progress_cb(asset_pack_progress_cb_t cb, void *user);

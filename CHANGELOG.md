@@ -25,8 +25,9 @@
  - Made command lookup case-insensitive (`SCANAP` now works)
  - Reduced `sd tree` walker memory from ~16 KB to ~600 B (no BSS) and made it work on devices without PSRAM
  - Made Ghostchi passive by default, added a passive/aggressive mode toggle on pages 1 & 2 of the Ghostchi view
- - Added on-device PCAP browser with hc22000 markers under WiFi > Capture
- - Added one-tap PCAP to hc22000 export (PMKID + M2/M3 handshake detection)
+  - Added on-device PCAP browser with hc22000 markers under WiFi > Capture
+  - Added one-tap PCAP to hc22000 export (PMKID + M2/M3 handshake detection)
+  - Added a small progress bar to the splash so SD mount, asset pack load, and app scan no longer freeze the display while booting
 
 ## Revival v2.0-pre3
 

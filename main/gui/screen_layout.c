@@ -167,7 +167,9 @@ static void apply_bg_widget(lv_obj_t *root, const lv_img_dsc_t *src) {
     }
 }
 
-lv_obj_t *gui_screen_create_root(lv_obj_t *parent, const char *title, lv_color_t bg_color, lv_opa_t bg_opa) {
+static lv_obj_t *create_root_internal(lv_obj_t *parent, const char *title,
+                                     lv_color_t bg_color, lv_opa_t bg_opa,
+                                     bool use_asset_pack_bg) {
     if (!parent) parent = lv_scr_act();
 
     lv_obj_t *root = lv_obj_create(parent);
@@ -181,14 +183,16 @@ lv_obj_t *gui_screen_create_root(lv_obj_t *parent, const char *title, lv_color_t
     lv_obj_set_style_pad_all(root, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(root, 0, LV_PART_MAIN);
 
-    /* Prefer the pre-baked fullscreen bg (single blit) over the smaller tile. */
-    const lv_img_dsc_t *bg_src = asset_pack_get_background_fullscreen();
-    if (!bg_src) bg_src = asset_pack_get_background_tile();
-    if (bg_src) {
-        apply_bg_widget(root, bg_src);
-        s_last_applied_bg_root = root;
-        s_last_applied_bg_src = bg_src;
-        s_last_applied_bg_version = asset_pack_get_version();
+    if (use_asset_pack_bg) {
+        /* Prefer the pre-baked fullscreen bg (single blit) over the smaller tile. */
+        const lv_img_dsc_t *bg_src = asset_pack_get_background_fullscreen();
+        if (!bg_src) bg_src = asset_pack_get_background_tile();
+        if (bg_src) {
+            apply_bg_widget(root, bg_src);
+            s_last_applied_bg_root = root;
+            s_last_applied_bg_src = bg_src;
+            s_last_applied_bg_version = asset_pack_get_version();
+        }
     }
 
     if (title && title[0]) {
@@ -196,6 +200,14 @@ lv_obj_t *gui_screen_create_root(lv_obj_t *parent, const char *title, lv_color_t
     }
 
     return root;
+}
+
+lv_obj_t *gui_screen_create_root(lv_obj_t *parent, const char *title, lv_color_t bg_color, lv_opa_t bg_opa) {
+    return create_root_internal(parent, title, bg_color, bg_opa, true);
+}
+
+lv_obj_t *gui_screen_create_root_no_bg(lv_obj_t *parent, const char *title, lv_color_t bg_color, lv_opa_t bg_opa) {
+    return create_root_internal(parent, title, bg_color, bg_opa, false);
 }
 
 void gui_screen_apply_background(lv_obj_t *root) {

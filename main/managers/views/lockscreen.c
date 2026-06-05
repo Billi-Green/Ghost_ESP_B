@@ -593,7 +593,7 @@ void lockscreen_create(void) {
     lv_color_t bg_color = lv_color_hex(theme_palette_get_background(theme));
     display_manager_fill_screen(bg_color);
 
-    s_root = gui_screen_create_root(NULL, "Locked", bg_color, LV_OPA_COVER);
+    s_root = gui_screen_create_root_no_bg(NULL, "Locked", bg_color, LV_OPA_COVER);
     lockscreen_view.root = s_root;
     s_content = gui_screen_create_content(s_root, GUI_STATUS_BAR_H);
 

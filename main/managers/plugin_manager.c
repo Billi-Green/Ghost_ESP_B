@@ -33,6 +33,8 @@ static const char *TAG = "PluginManager";
 static plugin_app_manifest_t *s_apps = NULL;
 static int s_app_count = 0;
 static char s_last_error[128];
+static plugin_manager_progress_cb_t s_progress_cb = NULL;
+static void *s_progress_user = NULL;
 
 typedef struct {
     bool valid;
@@ -512,16 +514,19 @@ int plugin_manager_reload(void) {
     s_app_count = 0;
     memset(s_apps, 0, sizeof(*s_apps) * PLUGIN_APP_MAX_COUNT);
     s_last_error[0] = '\0';
+    if (s_progress_cb) s_progress_cb(0.0f, 0, 0, s_progress_user);
 
     bool display_was_suspended = false;
     bool mounted_here = false;
     if (!sd_card_manager.is_initialized) {
         if (!plugin_manager_sd_jit_allowed()) {
             set_error("SD not mounted for %s", "apps");
+            if (s_progress_cb) s_progress_cb(100.0f, 0, 0, s_progress_user);
             return -1;
         }
         if (sd_card_mount_for_flush(&display_was_suspended) != ESP_OK) {
             set_error("failed to mount SD for %s", "apps");
+            if (s_progress_cb) s_progress_cb(100.0f, 0, 0, s_progress_user);
             return -1;
         }
         mounted_here = true;
@@ -565,6 +570,7 @@ int plugin_manager_reload(void) {
         closedir(dir);
     }
     if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
+    if (s_progress_cb) s_progress_cb(100.0f, s_app_count, s_app_count, s_progress_user);
     ESP_LOGI(TAG, "Loaded %d SD app manifests in %lld ms", s_app_count, (long long)((esp_timer_get_time() - start_us) / 1000));
     return s_app_count;
 }
@@ -636,4 +642,9 @@ bool plugin_manager_reset_app_state(const char *id) {
 
 const char *plugin_manager_last_error(void) {
     return s_last_error;
+}
+
+void plugin_manager_set_progress_cb(plugin_manager_progress_cb_t cb, void *user) {
+    s_progress_cb = cb;
+    s_progress_user = user;
 }
