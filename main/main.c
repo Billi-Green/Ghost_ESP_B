@@ -379,7 +379,6 @@ static volatile uint32_t s_boot_done_mask = 0;
 #define BOOT_DONE_SD_ASSET  (1u << 0)
 #define BOOT_DONE_PLUGIN    (1u << 1)
 #define BOOT_DONE_ALL       (BOOT_DONE_SD_ASSET | BOOT_DONE_PLUGIN)
-#define BOOT_APP_SCAN_STACK_BYTES 32768
 
 static void splash_boot_step_done(uint32_t step) {
     uint32_t now;
@@ -393,6 +392,8 @@ static void splash_boot_step_done(uint32_t step) {
     }
 }
 #endif
+
+#define BOOT_APP_SCAN_STACK_BYTES 32768
 
 static void boot_app_discovery_task(void *arg) {
     (void)arg;
