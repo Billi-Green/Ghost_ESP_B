@@ -112,21 +112,31 @@ static void ghostchi_get_progress(const ghostchi_snapshot_t *snap, ghostchi_prog
     out->xp_for_next = out->xp_into_level;
 }
 
-extern const lv_img_dsc_t happy_50x50;
-extern const lv_img_dsc_t angry_50x50;
-extern const lv_img_dsc_t evil_50x50;
-extern const lv_img_dsc_t love_50x50;
-extern const lv_img_dsc_t tired_50x50;
-extern const lv_img_dsc_t what2_50x50;
-extern const lv_img_dsc_t speech;
-extern const lv_img_dsc_t banshee_50x50;
-extern const lv_img_dsc_t cake_50x50;
-extern const lv_img_dsc_t sleep_50x50;
-extern const lv_img_dsc_t subghz_50x50;
-extern const lv_img_dsc_t surpised_50x50;
+LV_IMG_DECLARE(happy_50x50);
+LV_IMG_DECLARE(angry_50x50);
+LV_IMG_DECLARE(evil_50x50);
+LV_IMG_DECLARE(love_50x50);
+LV_IMG_DECLARE(tired_50x50);
+LV_IMG_DECLARE(what2_50x50);
+LV_IMG_DECLARE(speech);
+LV_IMG_DECLARE(banshee_50x50);
+LV_IMG_DECLARE(cake_50x50);
+LV_IMG_DECLARE(sleep_50x50);
+LV_IMG_DECLARE(subghz_50x50);
+LV_IMG_DECLARE(surpised_50x50);
 
 #define GHOST_W 50
 #define GHOST_H 50
+
+static const lv_img_dsc_t *ghostchi_valid_sprite(const lv_img_dsc_t *sprite,
+                                                 const lv_img_dsc_t *fallback) {
+    lv_img_header_t header;
+    if (sprite && lv_img_decoder_get_info(sprite, &header) == LV_RES_OK &&
+        header.w == GHOST_W && header.h == GHOST_H) {
+        return sprite;
+    }
+    return fallback ? fallback : &happy_50x50;
+}
 
 static lv_obj_t *s_root;
 static lv_obj_t *s_content;
@@ -562,7 +572,7 @@ static const lv_img_dsc_t *pick_ghost_sprite(const ghostchi_snapshot_t *snap) {
     if (snap->level_up_at_ms != 0) {
         uint32_t now = (uint32_t)(esp_timer_get_time() / 1000ULL);
         if ((now - snap->level_up_at_ms) < GHOSTCHI_UI_LEVELUP_WINDOW_MS) {
-            return &cake_50x50;
+            return ghostchi_valid_sprite(&cake_50x50, &love_50x50);
         }
     }
 
@@ -571,7 +581,7 @@ static const lv_img_dsc_t *pick_ghost_sprite(const ghostchi_snapshot_t *snap) {
     ghostchi_activity_snapshot_t act = {0};
     ghostchi_activity_get_snapshot(&act);
     if (act.aerial_devices > 0) {
-        return &surpised_50x50;
+        return ghostchi_valid_sprite(&surpised_50x50, &what2_50x50);
     }
 
     /* Resolve the base mood for current run state / idle age. */
@@ -579,7 +589,7 @@ static const lv_img_dsc_t *pick_ghost_sprite(const ghostchi_snapshot_t *snap) {
     if (!snap->running) {
         uint32_t hours = idle_hours(snap);
         if (!snap->sd_ready)               base = &what2_50x50;
-        else if (hours >= 24)              base = &sleep_50x50;  /* deep "Zzz" mood */
+        else if (hours >= 24)              base = ghostchi_valid_sprite(&sleep_50x50, &tired_50x50);
         else if (hours >= 8)               base = &tired_50x50;
         else if (ghostchi_is_thriving(snap)) base = &love_50x50;
         /* else happy_50x50 */
@@ -607,7 +617,7 @@ static const lv_img_dsc_t *pick_ghost_sprite(const ghostchi_snapshot_t *snap) {
             s_attack_locked_state  = snap->state;
             s_attack_locked_running = snap->running;
         }
-        return s_attack_icon;
+        return ghostchi_valid_sprite(s_attack_icon, &evil_50x50);
     }
 
     /* Not in STIM anymore — drop the lock so the next entry re-rolls. */

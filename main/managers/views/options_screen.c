@@ -24,6 +24,7 @@
 #include "managers/settings_sd_backup.h"
 #include "managers/wifi_manager.h"
 #include "gui/popup.h"
+#include "gui/toast.h"
 #include "core/utils.h"
 #include "managers/sd_card_manager.h"  /* MAX_PORTAL_NAME, sd_card_list_dir_paged */
 #include "esp_err.h"
@@ -745,7 +746,7 @@ static const char * const wifi_capture_options[] = {
 #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
     "Capture 802.15.4", "Capture 802.15.4 (Channel)",
 #endif
-    "Listen for Probes", "On-device Captures", "Export PCAP hc22000", NULL
+    "Listen for Probes", "Export PCAP hc22000", NULL
 };
 
 static const char * const wifi_scan_select_options[] = {
@@ -4966,8 +4967,7 @@ void option_event_cb(lv_event_t *e) {
         }
 
         if (current_wifi_menu_state == WIFI_MENU_CAPTURE &&
-            (strcmp(Selected_Option, "On-device Captures") == 0 ||
-             strcmp(Selected_Option, "Export PCAP hc22000") == 0)) {
+            strcmp(Selected_Option, "Export PCAP hc22000") == 0) {
             pcap_capture_page_offset = 0;
             current_wifi_menu_state = WIFI_MENU_CAPTURE_BROWSER;
             rebuild_current_menu();
@@ -4996,12 +4996,34 @@ void option_event_cb(lv_event_t *e) {
 
             const char *file_name = strchr(Selected_Option, ' ');
             file_name = file_name ? file_name + 1 : Selected_Option;
-            char cmd[96];
-            snprintf(cmd, sizeof(cmd), "capture -export %s", file_name);
-            terminal_set_return_view(&options_menu_view);
-            display_manager_switch_view(&terminal_view);
-            simulateCommand(cmd);
-            view_switched = true;
+
+            bool jit_mounted = false;
+            bool display_suspended = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+            if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+                if (!sd_card_manager.is_initialized) {
+                    if (sd_card_mount_for_flush(&display_suspended) == ESP_OK) {
+                        jit_mounted = true;
+                    }
+                }
+            }
+#endif
+            char out_path[MAX_FILE_NAME_LENGTH];
+            int pmkid = 0;
+            int handshakes = 0;
+            esp_err_t err = pcap_export_hc22000(file_name, out_path, sizeof(out_path), &pmkid, &handshakes);
+            if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
+
+            if (err == ESP_OK) {
+                char msg[128];
+                snprintf(msg, sizeof(msg), "Exported: PMKID %d, M2/M3 %d", pmkid, handshakes);
+                toast_show_duration(msg, TOAST_SUCCESS, 2500);
+            } else if (err == ESP_ERR_NOT_FOUND) {
+                toast_show_duration("No handshake found", TOAST_WARN, 2000);
+            } else {
+                toast_show_duration("Export failed", TOAST_ERROR, 2000);
+            }
+            option_invoked = false;
             return;
         }
     }
@@ -6635,6 +6657,18 @@ static void pcap_capture_free_cache(void) {
 static const char **pcap_capture_load_page(void) {
     static const char *empty[] = {"No PCAP files found", NULL};
 
+    bool jit_mounted = false;
+    bool display_suspended = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (!sd_card_manager.is_initialized) {
+            if (sd_card_mount_for_flush(&display_suspended) == ESP_OK) {
+                jit_mounted = true;
+            }
+        }
+    }
+#endif
+
     pcap_capture_free_cache();
 
     static const char *pcap_dirs[] = {
@@ -6659,7 +6693,10 @@ static const char **pcap_capture_load_page(void) {
         total_files += dir_counts[d];
     }
 
-    if (total_files == 0) return empty;
+    if (total_files == 0) {
+        if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
+        return empty;
+    }
 
     bool show_prev = (pcap_capture_page_offset > 0);
     bool show_next = (pcap_capture_page_offset + PCAP_CAPTURE_PAGE_SIZE < total_files);
@@ -6668,12 +6705,16 @@ static const char **pcap_capture_load_page(void) {
     if (page_count < 0) page_count = 0;
     int total = (show_prev ? 1 : 0) + page_count + (show_next ? 1 : 0);
 
-    if (total == 0) return empty;
+    if (total == 0) {
+        if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
+        return empty;
+    }
 
     pcap_capture_names = malloc(MAX_FILE_NAME_LENGTH * (size_t)total);
     pcap_capture_options = malloc(sizeof(char *) * ((size_t)total + 1));
     if (!pcap_capture_names || !pcap_capture_options) {
         pcap_capture_free_cache();
+        if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
         return empty;
     }
 
@@ -6723,6 +6764,7 @@ static const char **pcap_capture_load_page(void) {
     }
     pcap_capture_options[idx] = NULL;
 
+    if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
     return pcap_capture_options;
 }
 
@@ -9255,6 +9297,10 @@ static void menu_builder_cb(lv_timer_t *t)
                 }
                 lv_obj_set_height(btn, row_height);
                 options_view_relayout_item(g_options_view, btn);
+                if (SelectedMenuType == OT_Wifi && current_wifi_menu_state == WIFI_MENU_CAPTURE_BROWSER) {
+                    lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+                    if (lbl) lv_label_set_long_mode(lbl, LV_LABEL_LONG_SCROLL);
+                }
                 style_multi_select_row(btn, multi_select_option_is_toggled(build_item_index, opt));
                 num_items++;
                 built_this_tick++;

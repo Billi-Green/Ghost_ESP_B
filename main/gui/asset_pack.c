@@ -12,6 +12,7 @@
 #include "managers/views/options_screen.h"
 #include "nvs.h"
 #include "nvs_flash.h"
+#include "sdkconfig.h"
 #include "lgfx/utility/lgfx_miniz.h"
 #include <ctype.h>
 #include <dirent.h>
@@ -101,6 +102,7 @@ static int s_bg_candidate_index = 0;
 static char s_app_icon_key[ASSET_PACK_NAME_MAX];
 static char s_pack_dir[ASSET_PACK_PATH_MAX] = ACTIVE_PACK_DIR;
 static char s_active_name[ASSET_PACK_NAME_MAX] = "active";
+static bool s_active_is_archive = false;
 static lv_img_dsc_t s_bg_tile_dsc;
 static uint8_t *s_bg_tile_data = NULL;
 static lv_img_dsc_t s_bg_fullscreen_dsc;
@@ -233,6 +235,7 @@ static bool pack_cache_meta_path(const char *name, char *path, size_t path_len) 
 
 static void set_pack_dir_for_name(const char *name, bool archive) {
     snprintf(s_active_name, sizeof(s_active_name), "%s", name && name[0] ? name : "active");
+    s_active_is_archive = archive;
     if (archive) {
         if (!pack_cache_dir(s_active_name, s_pack_dir, sizeof(s_pack_dir))) {
             snprintf(s_pack_dir, sizeof(s_pack_dir), "%s", ACTIVE_PACK_DIR);
@@ -274,6 +277,15 @@ static bool path_is_file(const char *path) {
 static esp_err_t asset_sd_begin(bool *mounted_here, bool *display_suspended) {
     if (mounted_here) *mounted_here = false;
     if (display_suspended) *display_suspended = false;
+
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        esp_err_t err = sd_card_mount_for_flush(display_suspended);
+        if (err == ESP_OK && mounted_here) *mounted_here = true;
+        return err;
+    }
+#endif
+
     if (sd_card_manager.is_initialized) return ESP_OK;
     esp_err_t err = sd_card_mount_for_flush(display_suspended);
     if (err == ESP_OK && mounted_here) *mounted_here = true;
@@ -327,6 +339,13 @@ static void write_archive_cache_meta(const char *name, const struct stat *archiv
     if (!f) return;
     fprintf(f, "%lu %lu\n", (unsigned long)archive_st->st_size, (unsigned long)archive_st->st_mtime);
     fclose(f);
+}
+
+static void invalidate_active_archive_cache(void) {
+    if (!s_active_is_archive) return;
+    char meta_path[192];
+    if (!pack_cache_meta_path(s_active_name, meta_path, sizeof(meta_path))) return;
+    (void)unlink(meta_path);
 }
 
 static bool pack_exists(const char *name, bool *archive) {
@@ -990,15 +1009,28 @@ static asset_icon_entry_t *find_icon(const char *name) {
     return NULL;
 }
 
-static const char *pick_icon_rel(const asset_icon_entry_t *entry) {
-    if (!entry) return NULL;
+static void add_icon_rel_candidate(const char **rels, int *count, const char *rel) {
+    if (!rel || !rel[0] || !rels || !count || *count >= 3) return;
+    for (int i = 0; i < *count; ++i) {
+        if (strcmp(rels[i], rel) == 0) return;
+    }
+    rels[(*count)++] = rel;
+}
+
+static int icon_rel_candidates(const asset_icon_entry_t *entry, const char **rels, int max_count) {
+    if (!entry || !rels || max_count < 3) return 0;
+    int count = 0;
     bool small = !s_has_psram || LV_MIN(LV_HOR_RES, LV_VER_RES) < 200;
-    if (small && entry->small) return entry->small;
-    if (!small && entry->large) return entry->large;
-    if (entry->xl) return entry->xl;
-    if (entry->large) return entry->large;
-    if (entry->small) return entry->small;
-    return NULL;
+    if (small) {
+        add_icon_rel_candidate(rels, &count, entry->small);
+        add_icon_rel_candidate(rels, &count, entry->xl);
+        add_icon_rel_candidate(rels, &count, entry->large);
+    } else {
+        add_icon_rel_candidate(rels, &count, entry->large);
+        add_icon_rel_candidate(rels, &count, entry->xl);
+        add_icon_rel_candidate(rels, &count, entry->small);
+    }
+    return count;
 }
 
 static uint64_t hash_path(const char *path) {
@@ -1040,6 +1072,9 @@ static void preload_loaded_assets(void) {
         if (join_pack_path(path, sizeof(path), s_bg_tile)) {
             esp_err_t err = load_gimg(path, true, ASSET_PACK_BG_FULLSCREEN_MAX_RAW, &s_bg_tile_dsc, &s_bg_tile_data);
             if (err != ESP_OK) {
+                if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_VERSION || err == ESP_ERR_INVALID_CRC) {
+                    invalidate_active_archive_cache();
+                }
                 ESP_LOGW(TAG, "background preload failed (%s): %s", path, esp_err_to_name(err));
             }
         }
@@ -1057,31 +1092,40 @@ static void preload_loaded_assets(void) {
     int loaded = 0;
     int deduped = 0;
     for (int i = 0; i < s_icon_count; ++i) {
-        const char *rel = pick_icon_rel(&s_icons[i]);
-        char path[192];
-        if (!join_pack_path(path, sizeof(path), rel)) continue;
-        if (path_load_failed(path)) continue;
+        const char *rels[3] = {0};
+        int rel_count = icon_rel_candidates(&s_icons[i], rels, 3);
+        bool icon_done = false;
+        for (int r = 0; r < rel_count && !icon_done; ++r) {
+            char path[192];
+            if (!join_pack_path(path, sizeof(path), rels[r])) continue;
+            if (path_load_failed(path)) continue;
 
-        /* Skip paths already loaded; multiple icon names can resolve to the
-         * same file and we want a single decoded image in the cache. */
-        if (cache_find_path(path)) {
-            deduped++;
-            continue;
+            /* Skip paths already loaded; multiple icon names can resolve to the
+             * same file and we want a single decoded image in the cache. */
+            if (cache_find_path(path)) {
+                deduped++;
+                icon_done = true;
+                continue;
+            }
+
+            asset_icon_cache_entry_t *slot = cache_slot_for_evict();
+            if (!slot) break;
+
+            uint32_t icon_max = s_has_psram ? ASSET_PACK_ICON_MAX_RAW : ASSET_PACK_ICON_MAX_RAW_INTERNAL;
+            esp_err_t err = load_gimg(path, false, icon_max, &slot->dsc, &slot->data);
+            if (err != ESP_OK) {
+                remember_failed_path(path);
+                if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_VERSION || err == ESP_ERR_INVALID_CRC) {
+                    invalidate_active_archive_cache();
+                }
+                ESP_LOGW(TAG, "icon preload failed for %s (%s): %s", s_icons[i].name ? s_icons[i].name : "?", path, esp_err_to_name(err));
+                continue;
+            }
+            slot->key_hash = hash_path(path);
+            slot->last_used = ++s_cache_tick;
+            loaded++;
+            icon_done = true;
         }
-
-        asset_icon_cache_entry_t *slot = cache_slot_for_evict();
-        if (!slot) continue;
-
-        uint32_t icon_max = s_has_psram ? ASSET_PACK_ICON_MAX_RAW : ASSET_PACK_ICON_MAX_RAW_INTERNAL;
-        esp_err_t err = load_gimg(path, false, icon_max, &slot->dsc, &slot->data);
-        if (err != ESP_OK) {
-            remember_failed_path(path);
-            ESP_LOGW(TAG, "icon preload failed for %s (%s): %s", s_icons[i].name ? s_icons[i].name : "?", path, esp_err_to_name(err));
-            continue;
-        }
-        slot->key_hash = hash_path(path);
-        slot->last_used = ++s_cache_tick;
-        loaded++;
     }
 
     if (deduped > 0) {
@@ -1424,15 +1468,9 @@ const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fa
     }
 
     asset_icon_entry_t *entry = find_icon(name);
-    const char *rel = pick_icon_rel(entry);
-    char path[192];
-    if (!join_pack_path(path, sizeof(path), rel)) {
-        s_last_icon = fallback;
-        s_last_icon_key = name;
-        s_last_icon_version = s_version;
-        return fallback;
-    }
-    if (path_load_failed(path)) {
+    const char *rels[3] = {0};
+    int rel_count = icon_rel_candidates(entry, rels, 3);
+    if (rel_count == 0) {
         s_last_icon = fallback;
         s_last_icon_key = name;
         s_last_icon_version = s_version;
@@ -1441,13 +1479,18 @@ const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fa
 
     /* Cache lookup by resolved path. Multiple icon names that resolve to
      * the same file share a single decoded image in the cache. */
-    asset_icon_cache_entry_t *cached = cache_find_path(path);
-    if (cached) {
-        cached->last_used = ++s_cache_tick;
-        s_last_icon = &cached->dsc;
-        s_last_icon_key = name;
-        s_last_icon_version = s_version;
-        return &cached->dsc;
+    for (int r = 0; r < rel_count; ++r) {
+        char path[192];
+        if (!join_pack_path(path, sizeof(path), rels[r])) continue;
+        if (path_load_failed(path)) continue;
+        asset_icon_cache_entry_t *cached = cache_find_path(path);
+        if (cached) {
+            cached->last_used = ++s_cache_tick;
+            s_last_icon = &cached->dsc;
+            s_last_icon_key = name;
+            s_last_icon_version = s_version;
+            return &cached->dsc;
+        }
     }
 
     asset_icon_cache_entry_t *slot = cache_slot_for_evict();
@@ -1457,14 +1500,28 @@ const lv_img_dsc_t *asset_pack_get_icon(const char *name, const lv_img_dsc_t *fa
     esp_err_t mount_err = asset_sd_begin(&mounted_here, &display_suspended);
     if (mount_err != ESP_OK) return fallback;
     uint32_t icon_max = s_has_psram ? ASSET_PACK_ICON_MAX_RAW : ASSET_PACK_ICON_MAX_RAW_INTERNAL;
-    esp_err_t err = load_gimg(path, false, icon_max, &slot->dsc, &slot->data);
+    char loaded_path[192] = {0};
+    esp_err_t err = ESP_ERR_NOT_FOUND;
+    for (int r = 0; r < rel_count; ++r) {
+        char path[192];
+        if (!join_pack_path(path, sizeof(path), rels[r])) continue;
+        if (path_load_failed(path)) continue;
+        err = load_gimg(path, false, icon_max, &slot->dsc, &slot->data);
+        if (err == ESP_OK) {
+            snprintf(loaded_path, sizeof(loaded_path), "%s", path);
+            break;
+        }
+        remember_failed_path(path);
+        if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_VERSION || err == ESP_ERR_INVALID_CRC) {
+            invalidate_active_archive_cache();
+        }
+        ESP_LOGW(TAG, "icon load failed for %s (%s): %s", name, path, esp_err_to_name(err));
+    }
     asset_sd_end(mounted_here, display_suspended);
     if (err != ESP_OK) {
-        remember_failed_path(path);
-        ESP_LOGW(TAG, "icon load failed for %s (%s): %s", name, path, esp_err_to_name(err));
         return fallback;
     }
-    slot->key_hash = hash_path(path);
+    slot->key_hash = hash_path(loaded_path);
     slot->last_used = ++s_cache_tick;
     s_last_icon = &slot->dsc;
     s_last_icon_key = name;
@@ -1505,6 +1562,9 @@ const lv_img_dsc_t *asset_pack_get_background_tile(void) {
         asset_sd_end(mounted_here, display_suspended);
         if (err != ESP_OK) {
             remember_failed_path(path);
+            if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_VERSION || err == ESP_ERR_INVALID_CRC) {
+                invalidate_active_archive_cache();
+            }
             if (!s_has_psram && err == ESP_ERR_INVALID_SIZE) {
                 ESP_LOGD(TAG, "background too large for no-PSRAM device (%s)", path);
                 if (select_next_bg_candidate()) continue;

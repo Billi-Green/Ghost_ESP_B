@@ -255,10 +255,22 @@ static int capture_list_dir(const char *dir_path) {
 }
 
 static void handle_capture_list(void) {
+    bool jit_mounted = false;
+    bool display_suspended = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (!sd_card_manager.is_initialized) {
+            if (sd_card_mount_for_flush(&display_suspended) == ESP_OK) {
+                jit_mounted = true;
+            }
+        }
+    }
+#endif
     glog("On-device captures:\n");
     int count = capture_list_dir("/mnt/ghostesp/pcaps");
     count += capture_list_dir("/mnt/ghostesp/ghostchi/pcaps");
     if (count == 0) glog("  No .pcap files found.\n");
+    if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
 }
 
 static void handle_capture_export(const char *arg) {
@@ -267,20 +279,35 @@ static void handle_capture_export(const char *arg) {
     int pmkid = 0;
     int handshakes = 0;
 
+    bool jit_mounted = false;
+    bool display_suspended = false;
+#ifdef CONFIG_BUILD_CONFIG_TEMPLATE
+    if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+        if (!sd_card_manager.is_initialized) {
+            if (sd_card_mount_for_flush(&display_suspended) == ESP_OK) {
+                jit_mounted = true;
+            }
+        }
+    }
+#endif
+
     capture_resolve_pcap_path(arg, in_path, sizeof(in_path));
     esp_err_t err = pcap_export_hc22000(in_path, out_path, sizeof(out_path), &pmkid, &handshakes);
     if (err == ESP_ERR_NOT_FOUND) {
         glog("No PMKID or M2/M3 handshakes found in %s\n", in_path);
         status_display_show_status("No Handshake");
+        if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
         return;
     }
     if (err != ESP_OK) {
         glog("hc22000 export failed for %s (err=%d)\n", in_path, err);
         status_display_show_status("Export Fail");
+        if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
         return;
     }
     glog("Exported %s\nPMKID: %d  M2/M3: %d\n", out_path, pmkid, handshakes);
     status_display_show_status("Export hc22000");
+    if (jit_mounted) sd_card_unmount_after_flush(display_suspended);
 }
 
 #ifdef __GNUC__
