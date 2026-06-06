@@ -335,15 +335,16 @@ static void lockscreen_focus_btn(int idx) {
     if (!s_numpad_cont || !lv_obj_is_valid(s_numpad_cont)) return;
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     lv_color_t accent = lv_color_hex(theme_palette_get_accent(theme));
+    lv_color_t focus_text = theme_palette_is_bright(theme) ? lv_color_hex(0x000000) : lv_color_hex(0xFFFFFF);
     for (int i = 0; i < NUMPAD_BTNS; i++) {
         if (!s_numpad_btns[i] || !lv_obj_is_valid(s_numpad_btns[i])) continue;
         bool focused = (i == idx);
         lv_obj_set_style_border_width(s_numpad_btns[i], focused ? 3 : 1, 0);
         lv_obj_set_style_border_color(s_numpad_btns[i], focused ? accent : lv_color_hex(0x444444), 0);
-        lv_obj_set_style_bg_opa(s_numpad_btns[i], focused ? LV_OPA_40 : LV_OPA_20, 0);
+        lv_obj_set_style_bg_color(s_numpad_btns[i], focused ? accent : lv_color_hex(0x222222), 0);
         lv_obj_t *lbl = lv_obj_get_child(s_numpad_btns[i], 0);
         if (lbl) {
-            lv_obj_set_style_text_color(lbl, focused ? lv_color_hex(theme_palette_get_accent(theme)) : lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_text_color(lbl, focused ? focus_text : lv_color_hex(0xFFFFFF), 0);
         }
     }
 }
@@ -421,11 +422,13 @@ static void lockscreen_build_numpad(void) {
         int min_numpad_y = 94;
         int bottom_margin = 10;
         int numpad_h = content_h - min_numpad_y - bottom_margin;
-        if (numpad_h < 36) {
-            numpad_h = 36;
-        }
+        if (numpad_h < 36) numpad_h = 36;
         btn_h = (numpad_h - (NUMPAD_ROWS - 1) * gap) / NUMPAD_ROWS;
-        if (btn_h > 30) btn_h = 30;
+        if (LV_VER_RES > 240) {
+            if (btn_h > 42) btn_h = 42;
+        } else {
+            if (btn_h > 30) btn_h = 30;
+        }
         if (btn_h < 14) btn_h = 14;
         btn_w = btn_h;
         int grid_h = NUMPAD_ROWS * btn_h + (NUMPAD_ROWS - 1) * gap;
@@ -447,8 +450,8 @@ static void lockscreen_build_numpad(void) {
         s_numpad_btns[i] = lv_btn_create(s_numpad_cont);
         lv_obj_set_size(s_numpad_btns[i], btn_w, btn_h);
         lv_obj_add_event_cb(s_numpad_btns[i], lockscreen_numpad_cb, LV_EVENT_CLICKED, (void*)(intptr_t)i);
-        lv_obj_set_style_bg_color(s_numpad_btns[i], lv_color_hex(0x000000), 0);
-        lv_obj_set_style_bg_opa(s_numpad_btns[i], LV_OPA_20, 0);
+        lv_obj_set_style_bg_color(s_numpad_btns[i], lv_color_hex(0x222222), 0);
+        lv_obj_set_style_bg_opa(s_numpad_btns[i], LV_OPA_COVER, 0);
         lv_obj_set_style_radius(s_numpad_btns[i], GUI_RADIUS_SM / 2, 0);
         lv_obj_set_style_border_width(s_numpad_btns[i], 1, 0);
         lv_obj_set_style_border_color(s_numpad_btns[i], lv_color_hex(0xFFFFFF), 0);
@@ -457,7 +460,7 @@ static void lockscreen_build_numpad(void) {
         lv_obj_set_style_shadow_opa(s_numpad_btns[i], LV_OPA_TRANSP, 0);
         lv_obj_t *lbl = lv_label_create(s_numpad_btns[i]);
         lv_label_set_text(lbl, k_numpad_labels[i]);
-        const lv_font_t *f = (btn_h < 20) ? &lv_font_montserrat_10 : &lv_font_montserrat_12;
+        const lv_font_t *f = (btn_h < 20) ? &lv_font_montserrat_10 : (btn_h >= 36 ? &lv_font_montserrat_16 : &lv_font_montserrat_12);
         lv_obj_set_style_text_font(lbl, f, 0);
         lv_obj_set_style_text_color(lbl, lv_color_hex(0xFFFFFF), 0);
         lv_obj_center(lbl);
@@ -593,7 +596,7 @@ void lockscreen_create(void) {
     lv_color_t bg_color = lv_color_hex(theme_palette_get_background(theme));
     display_manager_fill_screen(bg_color);
 
-    s_root = gui_screen_create_root_no_bg(NULL, "Locked", bg_color, LV_OPA_COVER);
+    s_root = gui_screen_create_root(NULL, "Locked", bg_color, LV_OPA_COVER);
     lockscreen_view.root = s_root;
     s_content = gui_screen_create_content(s_root, GUI_STATUS_BAR_H);
 
@@ -619,6 +622,11 @@ void lockscreen_create(void) {
         s_prompt = lv_label_create(s_content);
         lv_obj_set_style_text_font(s_prompt, &lv_font_montserrat_10, 0);
         lv_obj_set_style_text_color(s_prompt, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(s_prompt, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(s_prompt, LV_OPA_60, 0);
+        lv_obj_set_style_radius(s_prompt, 3, 0);
+        lv_obj_set_style_pad_hor(s_prompt, 4, 0);
+        lv_obj_set_style_pad_ver(s_prompt, 1, 0);
         lv_obj_set_style_text_align(s_prompt, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_width(s_prompt, left_col_w);
         lv_obj_align(s_prompt, LV_ALIGN_TOP_LEFT, 0, group_y + ghost_sz + 8);
@@ -626,6 +634,11 @@ void lockscreen_create(void) {
         s_dots = lv_label_create(s_content);
         lv_obj_set_style_text_font(s_dots, &lv_font_montserrat_14, 0);
         lv_obj_set_style_text_color(s_dots, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(s_dots, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(s_dots, LV_OPA_60, 0);
+        lv_obj_set_style_radius(s_dots, 3, 0);
+        lv_obj_set_style_pad_hor(s_dots, 4, 0);
+        lv_obj_set_style_pad_ver(s_dots, 1, 0);
         lv_obj_set_style_text_align(s_dots, LV_TEXT_ALIGN_CENTER, 0);
         lv_obj_set_width(s_dots, left_col_w);
         lv_obj_align(s_dots, LV_ALIGN_TOP_LEFT, 0, group_y + ghost_sz + 25);
@@ -635,7 +648,11 @@ void lockscreen_create(void) {
         int numpad_h = content_h - min_numpad_y - bottom_margin;
         if (numpad_h < 36) numpad_h = 36;
         int btn_h = (numpad_h - (NUMPAD_ROWS - 1) * 2) / NUMPAD_ROWS;
-        if (btn_h > 30) btn_h = 30;
+        if (LV_VER_RES > 240) {
+            if (btn_h > 42) btn_h = 42;
+        } else {
+            if (btn_h > 30) btn_h = 30;
+        }
         if (btn_h < 14) btn_h = 14;
         int grid_h = NUMPAD_ROWS * btn_h + (NUMPAD_ROWS - 1) * 2;
         int numpad_y = content_h - grid_h - bottom_margin;
@@ -654,11 +671,21 @@ void lockscreen_create(void) {
         s_prompt = lv_label_create(s_content);
         lv_obj_set_style_text_font(s_prompt, gui_font_caption(), 0);
         lv_obj_set_style_text_color(s_prompt, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(s_prompt, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(s_prompt, LV_OPA_60, 0);
+        lv_obj_set_style_radius(s_prompt, 3, 0);
+        lv_obj_set_style_pad_hor(s_prompt, 6, 0);
+        lv_obj_set_style_pad_ver(s_prompt, 1, 0);
         lv_obj_align(s_prompt, LV_ALIGN_TOP_MID, 0, prompt_y_offset);
 
         s_dots = lv_label_create(s_content);
         lv_obj_set_style_text_font(s_dots, &lv_font_montserrat_16, 0);
         lv_obj_set_style_text_color(s_dots, lv_color_hex(0xFFFFFF), 0);
+        lv_obj_set_style_bg_color(s_dots, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(s_dots, LV_OPA_60, 0);
+        lv_obj_set_style_radius(s_dots, 3, 0);
+        lv_obj_set_style_pad_hor(s_dots, 6, 0);
+        lv_obj_set_style_pad_ver(s_dots, 1, 0);
         lv_obj_align(s_dots, LV_ALIGN_TOP_MID, 0, dots_y_offset);
     }
 

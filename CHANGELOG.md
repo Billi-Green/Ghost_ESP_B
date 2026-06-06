@@ -22,7 +22,7 @@
  - Slimmed and rounded the terminal's bottom touch controls to match the rest of the UI
  - Themed the terminal's input bar and back button via the palette instead of hardcoded colors
  - Cached the DualComm line check per row to keep the split-view terminal smooth
- - Added 5 new Ghostchi moods. "Banshee" by @pr3
+ - Added 5 new Ghostchi images. "Banshee" by @pr3
  - Fixed `help` (no args) printing the category list twice
  - Fixed duplicate `powerprinter` entry in `help printer`
  - Fixed `chameleon` (no args) double-printing its help on the on-screen terminal
@@ -31,10 +31,17 @@
  - Made command lookup case-insensitive (`SCANAP` now works)
  - Reduced `sd tree` walker memory from ~16 KB to ~600 B (no BSS) and made it work on devices without PSRAM
  - Made Ghostchi passive by default, added a passive/aggressive mode toggle on pages 1 & 2 of the Ghostchi view
-  - Added on-device PCAP browser with hc22000 markers under WiFi > Capture
-  - Added one-tap PCAP to hc22000 export (PMKID + M2/M3 handshake detection)
-  - Added a small progress bar to the splash so SD mount, asset pack load, and app scan no longer freeze the display while booting
-  - Reduced the brief white screen before splash by keeping the backlight off until the first splash frame is drawn
+ - Added on-device PCAP browser with hc22000 markers under WiFi > Capture
+ - Added one-tap PCAP to hc22000 export (PMKID + M2/M3 handshake detection)
+ - Added a small progress bar to the boot screen so SD mount, asset pack load, and app scan no longer happen while using the device
+ - Reduced the brief white screen before splash by keeping the backlight off until the first splash frame is drawn
+ - Added an SD Browser app for paginated file/folder browsing, rename, and delete actions
+ - Plugin icons now recolor to their manifest accent color, unless overridden by an asset pack
+ - Lockscreen shows the asset pack background instead of a solid color
+ - Lockscreen numpad keys are now solid with proper contrast on focused buttons
+ - Lockscreen prompt and PIN dots have a dark backdrop for readability
+ - Larger lockscreen numpad on taller displays
+ - Removed "SD card mounted" toast during boot
 
 ## Revival v2.0-pre3
 

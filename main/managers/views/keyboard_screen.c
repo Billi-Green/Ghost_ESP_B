@@ -121,7 +121,7 @@ static void init_keyboard_styles(void) {
 
     lv_style_init(&style_key_btn);
     lv_style_set_bg_color(&style_key_btn, surface);
-    lv_style_set_bg_opa(&style_key_btn, LV_OPA_20);
+    lv_style_set_bg_opa(&style_key_btn, LV_OPA_COVER);
     lv_style_set_border_color(&style_key_btn, text);
     lv_style_set_border_opa(&style_key_btn, LV_OPA_50);
     lv_style_set_border_width(&style_key_btn, 1);
@@ -234,7 +234,7 @@ static void style_shift_key(lv_obj_t *btn, lv_obj_t *label, bool capslock, bool 
         lv_obj_set_style_text_color(label, sel_fg, 0);
     } else {
         lv_obj_set_style_bg_color(btn, surface, 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_20, 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
         lv_obj_set_style_text_color(label, text, 0);
     }
 }
@@ -724,7 +724,7 @@ static void keyboard_create() {
     input_label = lv_label_create(root);
     lv_obj_set_size(input_label, LV_HOR_RES - 2 * padding, display_height - 2 * padding);
     lv_obj_set_style_bg_color(input_label, surface, 0);
-    lv_obj_set_style_bg_opa(input_label, LV_OPA_20, 0);
+    lv_obj_set_style_bg_opa(input_label, LV_OPA_COVER, 0);
     lv_obj_set_style_text_color(input_label, text, 0);
     lv_obj_set_style_pad_all(input_label, padding, 0);
     lv_obj_set_style_radius(input_label, radius, 0);
@@ -1274,7 +1274,7 @@ static void handle_hardware_button_press_keyboard(InputEvent *event) {
             const char *label_text = lv_label_get_text(key_label);
             if (strcmp(label_text, LV_SYMBOL_UP) != 0) {
                 lv_obj_set_style_bg_color(pressed_key_btn, kb_surface(), 0);
-                lv_obj_set_style_bg_opa(pressed_key_btn, LV_OPA_20, 0);
+                lv_obj_set_style_bg_opa(pressed_key_btn, LV_OPA_COVER, 0);
             }
             pressed_key_btn = NULL;
             // Always update key labels to refresh SHIFT key highlight
@@ -1529,7 +1529,7 @@ static void build_key_matrix(void) {
     }
 
     lv_obj_set_style_bg_color(key_matrix, kb_surface(), LV_PART_ITEMS | LV_STATE_DEFAULT);
-    lv_obj_set_style_bg_opa(key_matrix, LV_OPA_20, LV_PART_ITEMS | LV_STATE_DEFAULT);
+    lv_obj_set_style_bg_opa(key_matrix, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_DEFAULT);
     lv_obj_set_style_text_color(key_matrix, kb_text(), LV_PART_ITEMS | LV_STATE_DEFAULT);
     lv_color_t accent = kb_accent();
     lv_color_t sel_fg = kb_sel_text();

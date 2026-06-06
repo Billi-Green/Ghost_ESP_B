@@ -506,7 +506,6 @@ esp_err_t sd_card_init(void) {
   s_mount_type = MOUNT_SDMMC;
   sdmmc_card_print_info(sd_card_manager.card);
   printf("SD card initialized successfully\n");
-  toast_show("SD card mounted", TOAST_SUCCESS);
 
   sd_card_setup_directory_structure();
 
@@ -562,7 +561,6 @@ esp_err_t sd_card_init(void) {
   sd_card_manager.is_initialized = true;
   sdmmc_card_print_info(sd_card_manager.card);
   printf("SD card initialized successfully\n");
-  toast_show("SD card mounted", TOAST_SUCCESS);
 
   sd_card_setup_directory_structure();
 
@@ -865,7 +863,6 @@ esp_err_t sd_card_init(void) {
   s_mount_type = MOUNT_SPI;
   sdmmc_card_print_info(sd_card_manager.card);
   printf("SD card initialized successfully in SPI mode.\n");
-  toast_show("SD card mounted", TOAST_SUCCESS);
 
   sd_card_setup_directory_structure();
 
@@ -895,7 +892,6 @@ esp_err_t sd_card_init(void) {
   sd_card_manager.is_initialized = true;
   sdmmc_card_print_info(sd_card_manager.card);
   printf("SD card initialized successfully\n");
-  toast_show("SD card mounted", TOAST_SUCCESS);
 
   sd_card_setup_directory_structure();
 

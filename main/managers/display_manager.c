@@ -1939,7 +1939,8 @@ static bool touch_move_events_enabled_for_view_name(const char *view_name) {
           strcmp(view_name, "AirspaceMonitorView") == 0 ||
           strcmp(view_name, "Audio Player") == 0 ||
           strcmp(view_name, "Main Menu") == 0 ||
-          strcmp(view_name, "Apps Menu") == 0);
+          strcmp(view_name, "Apps Menu") == 0 ||
+          strcmp(view_name, "SD Browser") == 0);
 }
 
 static bool touch_move_events_enabled_for_current_view(void) {

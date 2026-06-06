@@ -569,6 +569,18 @@ int plugin_manager_reload(void) {
 
         closedir(dir);
     }
+    for (int i = 0; i < s_app_count; ++i) {
+        if (s_apps[i].icon[0] != '\0' && s_apps[i].icon_width > 0 && s_apps[i].icon_height > 0 && !s_apps[i].icon_dsc) {
+            char icon_path[PLUGIN_APP_PATH_MAX];
+            if (join_path(icon_path, sizeof(icon_path), s_apps[i].base_path, s_apps[i].icon)) {
+                if (strcmp(s_apps[i].icon_format, "rgb565a8") == 0) {
+                    s_apps[i].icon_dsc = plugin_icon_load_rgb565a8(icon_path, s_apps[i].icon_width, s_apps[i].icon_height);
+                } else {
+                    s_apps[i].icon_dsc = plugin_icon_load_rgb565(icon_path, s_apps[i].icon_width, s_apps[i].icon_height);
+                }
+            }
+        }
+    }
     if (mounted_here) sd_card_unmount_after_flush(display_was_suspended);
     if (s_progress_cb) s_progress_cb(100.0f, s_app_count, s_app_count, s_progress_user);
     ESP_LOGI(TAG, "Loaded %d SD app manifests in %lld ms", s_app_count, (long long)((esp_timer_get_time() - start_us) / 1000));

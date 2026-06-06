@@ -547,6 +547,7 @@ detail_view_t *detail_view_create(lv_obj_t *parent, const char *title) {
     lv_obj_set_style_bg_opa(dv->info_panel, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(dv->info_panel, 0, 0);
     lv_obj_set_style_pad_top(dv->info_panel, dv->compact_layout ? 0 : 1, 0);
+    lv_obj_set_style_pad_bottom(dv->info_panel, dv->compact_layout ? 1 : 4, 0);
     lv_obj_set_style_pad_left(dv->info_panel, info_pad_h, 0);
     lv_obj_set_style_pad_right(dv->info_panel, info_pad_h, 0);
     lv_obj_set_style_pad_row(dv->info_panel, 0, 0);
