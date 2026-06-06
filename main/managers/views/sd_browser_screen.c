@@ -45,15 +45,18 @@ static lv_obj_t *browser_root = NULL;
 static options_view_t *browser_options = NULL;
 static detail_view_t *browser_detail = NULL;
 static sd_browser_mode_t browser_mode = SD_BROWSER_MODE_LIST;
-static char current_dir[SD_BROWSER_PATH_MAX] = SD_BROWSER_ROOT;
-static sd_browser_entry_t page_entries[SD_BROWSER_PAGE_SIZE];
+/* Page state lives in heap so no-PSRAM boards (e.g. CYDMicroUSB) don't push
+ * ~1.8 KB of buffers into .dram0.bss and overflow the region. Allocated
+ * on view create, freed on destroy. */
+static char *current_dir = NULL;
+static sd_browser_entry_t *page_entries = NULL;
 static int page_entry_count = 0;
 static int page_offset = 0;
 static bool page_has_next = false;
-static sd_browser_row_t rows[SD_BROWSER_PAGE_SIZE + 5];
+static sd_browser_row_t *rows = NULL;
 static int row_count = 0;
-static sd_browser_entry_t selected_entry;
-static char selected_path[SD_BROWSER_PATH_MAX];
+static sd_browser_entry_t *selected_entry = NULL;
+static char *selected_path = NULL;
 static int sd_touch_start_x, sd_touch_start_y;
 static int sd_touch_last_x, sd_touch_last_y;
 static bool sd_touch_started;
@@ -221,7 +224,7 @@ static void sd_browser_parent_dir(void) {
     if (sd_browser_is_root()) return;
     char *slash = strrchr(current_dir, '/');
     if (!slash || slash <= current_dir + strlen(SD_BROWSER_ROOT)) {
-        snprintf(current_dir, sizeof(current_dir), SD_BROWSER_ROOT);
+        snprintf(current_dir, SD_BROWSER_PATH_MAX, SD_BROWSER_ROOT);
     } else {
         *slash = '\0';
     }
@@ -339,7 +342,7 @@ static void sd_browser_rename_cb(lv_event_t *e) {
     (void)e;
     keyboard_view_set_return_view(&sd_browser_view);
     keyboard_view_set_placeholder("New file name");
-    keyboard_view_set_initial_text(selected_entry.name);
+    keyboard_view_set_initial_text(selected_entry->name);
     keyboard_view_set_start_caps(false);
     keyboard_view_set_submit_callback(sd_browser_rename_submit_cb);
     display_manager_switch_view(&keyboard_view);
@@ -383,7 +386,7 @@ static void sd_browser_delete_cb(lv_event_t *e) {
     detail_view_set_bottom_reserved(browser_detail, TOUCH_BAR_HEIGHT);
 #endif
 
-    detail_view_add_info(browser_detail, "Name", selected_entry.name);
+    detail_view_add_info(browser_detail, "Name", selected_entry->name);
     detail_view_add_info(browser_detail, "Action", "This cannot be undone");
     detail_view_add_action(browser_detail, LV_SYMBOL_TRASH " Confirm Delete", sd_browser_confirm_delete_cb, NULL);
     detail_view_add_back(browser_detail, sd_browser_detail_back_cb, NULL);
@@ -397,8 +400,8 @@ static void sd_browser_detail_back_cb(lv_event_t *e) {
 
 static void sd_browser_show_file_detail(int index) {
     if (index < 0 || index >= page_entry_count) return;
-    selected_entry = page_entries[index];
-    if (!sd_browser_join_path(selected_path, sizeof(selected_path), current_dir, selected_entry.name)) return;
+    if (selected_entry) *selected_entry = page_entries[index];
+    if (!sd_browser_join_path(selected_path, SD_BROWSER_PATH_MAX, current_dir, selected_entry->name)) return;
 
     if (browser_options) {
         options_view_destroy(browser_options);
@@ -411,7 +414,7 @@ static void sd_browser_show_file_detail(int index) {
 
     browser_mode = SD_BROWSER_MODE_DETAIL;
     char title[96];
-    snprintf(title, sizeof(title), "File: %.80s", selected_entry.name);
+    snprintf(title, sizeof(title), "File: %.80s", selected_entry->name);
     browser_detail = detail_view_create(browser_root, title);
     if (!browser_detail) return;
 
@@ -422,9 +425,9 @@ static void sd_browser_show_file_detail(int index) {
 
     char folder[96];
     snprintf(folder, sizeof(folder), "%.80s", sd_browser_basename(current_dir));
-    detail_view_add_info(browser_detail, "Name", selected_entry.name);
+    detail_view_add_info(browser_detail, "Name", selected_entry->name);
     detail_view_add_info(browser_detail, "Folder", folder);
-    detail_view_add_infof(browser_detail, "Size", "%ld bytes", selected_entry.size);
+    detail_view_add_infof(browser_detail, "Size", "%ld bytes", selected_entry->size);
     detail_view_add_action(browser_detail, LV_SYMBOL_EDIT " Rename", sd_browser_rename_cb, NULL);
     detail_view_add_action(browser_detail, LV_SYMBOL_TRASH " Delete", sd_browser_delete_cb, NULL);
     detail_view_add_back(browser_detail, sd_browser_detail_back_cb, NULL);
@@ -440,7 +443,7 @@ static void sd_browser_open_entry(int index) {
     if (page_entries[index].is_dir) {
         char next_dir[SD_BROWSER_PATH_MAX];
         if (!sd_browser_join_path(next_dir, sizeof(next_dir), current_dir, page_entries[index].name)) return;
-        sd_browser_copy(current_dir, sizeof(current_dir), next_dir);
+        sd_browser_copy(current_dir, SD_BROWSER_PATH_MAX, next_dir);
         page_offset = 0;
         sd_browser_show_list();
     } else {
@@ -485,7 +488,7 @@ static void sd_browser_row_click_cb(lv_event_t *e) {
 }
 
 static void sd_browser_add_row(const char *label, sd_browser_row_type_t type, int entry_index) {
-    if (!browser_options || row_count >= (int)(sizeof(rows) / sizeof(rows[0]))) return;
+    if (!browser_options || row_count >= SD_BROWSER_PAGE_SIZE + 5) return;
     int row_index = row_count;
     rows[row_index].type = type;
     rows[row_index].entry_index = entry_index;
@@ -563,6 +566,25 @@ void sd_browser_create(void) {
     browser_root = gui_screen_create_root(NULL, NULL, lv_color_hex(theme_palette_get_background(theme)), LV_OPA_COVER);
     sd_browser_view.root = browser_root;
     if (!browser_root) return;
+
+    /* Lazily allocate page state. All buffers survive until sd_browser_destroy
+     * is called (the view is single-instance). */
+    if (!current_dir) {
+        current_dir = malloc(SD_BROWSER_PATH_MAX);
+        if (current_dir) snprintf(current_dir, SD_BROWSER_PATH_MAX, "%s", SD_BROWSER_ROOT);
+    }
+    if (!page_entries) {
+        page_entries = calloc(SD_BROWSER_PAGE_SIZE, sizeof(*page_entries));
+    }
+    if (!rows) {
+        rows = calloc(SD_BROWSER_PAGE_SIZE + 5, sizeof(*rows));
+    }
+    if (!selected_entry) {
+        selected_entry = calloc(1, sizeof(*selected_entry));
+    }
+    if (!selected_path) {
+        selected_path = malloc(SD_BROWSER_PATH_MAX);
+    }
 
 #ifdef CONFIG_USE_TOUCHSCREEN
     const int TOUCH_BAR_HEIGHT = SD_SCROLL_BTN_SIZE + SD_SCROLL_BTN_PADDING * 2;
@@ -648,6 +670,16 @@ void sd_browser_destroy(void) {
     browser_mode = SD_BROWSER_MODE_LIST;
     row_count = 0;
     page_entry_count = 0;
+    free(current_dir);
+    current_dir = NULL;
+    free(page_entries);
+    page_entries = NULL;
+    free(rows);
+    rows = NULL;
+    free(selected_entry);
+    selected_entry = NULL;
+    free(selected_path);
+    selected_path = NULL;
     sd_touch_reset();
 }
 

@@ -23,7 +23,11 @@ static lv_obj_t *s_title = NULL;
 static lv_obj_t *s_output = NULL;
 static lv_timer_t *s_tick_timer = NULL;
 static lv_timer_t *s_launch_timer = NULL;
-static char s_output_buf[2048];
+/* Heap-allocated so no-PSRAM boards (e.g. CYDMicroUSB) don't put 2 KB of
+ * scrollback into .dram0.bss and overflow the region. Allocated on view
+ * create, freed on destroy. */
+#define PLUGIN_RUNNER_OUTPUT_BUF_SIZE 2048
+static char *s_output_buf = NULL;
 static bool s_touch_started = false;
 static lv_point_t s_touch_start = {0};
 
@@ -51,18 +55,19 @@ static void runner_set_title_now(const char *title) {
 
 static void runner_print_now(const char *text) {
     if (!s_output || !lv_obj_is_valid(s_output) || !text) return;
+    if (!s_output_buf) return;
     size_t cur = strlen(s_output_buf);
     size_t add = strlen(text);
-    if (cur + add + 2 >= sizeof(s_output_buf)) {
-        memmove(s_output_buf, s_output_buf + sizeof(s_output_buf) / 2, strlen(s_output_buf + sizeof(s_output_buf) / 2) + 1);
+    if (cur + add + 2 >= PLUGIN_RUNNER_OUTPUT_BUF_SIZE) {
+        memmove(s_output_buf, s_output_buf + PLUGIN_RUNNER_OUTPUT_BUF_SIZE / 2, strlen(s_output_buf + PLUGIN_RUNNER_OUTPUT_BUF_SIZE / 2) + 1);
         cur = strlen(s_output_buf);
     }
-    snprintf(s_output_buf + cur, sizeof(s_output_buf) - cur, "%s", text);
+    snprintf(s_output_buf + cur, PLUGIN_RUNNER_OUTPUT_BUF_SIZE - cur, "%s", text);
     lv_label_set_text(s_output, s_output_buf);
 }
 
 static void runner_clear_now(void) {
-    s_output_buf[0] = '\0';
+    if (s_output_buf) s_output_buf[0] = '\0';
     if (s_output && lv_obj_is_valid(s_output)) lv_label_set_text(s_output, "");
 }
 
@@ -367,6 +372,11 @@ void plugin_runner_view_create(void) {
         lv_timer_del(s_launch_timer);
         s_launch_timer = NULL;
     }
+    if (!s_output_buf) {
+        s_output_buf = malloc(PLUGIN_RUNNER_OUTPUT_BUF_SIZE);
+        if (!s_output_buf) return;
+        s_output_buf[0] = '\0';
+    }
     s_sd_eject_detected = false;
     s_output_buf[0] = '\0';
     s_touch_started = false;
@@ -429,6 +439,8 @@ void plugin_runner_view_destroy(void) {
     s_title = NULL;
     s_output = NULL;
     s_touch_started = false;
+    free(s_output_buf);
+    s_output_buf = NULL;
     plugin_runner_view.root = NULL;
 }
 
