@@ -129,8 +129,7 @@ void splash_create(void) {
   s_splash_start_ms = lv_tick_get();
   s_splash_done = false;
   s_progress_indet_running = false;
-  s_fade_timer = lv_timer_create(splash_hold_expired_cb, min_hold_ms(), NULL);
-  lv_timer_set_repeat_count(s_fade_timer, 1);
+  schedule_fade_check();
 }
 
 static void splash_progress_indet_anim_cb(void *var, int32_t v) {

@@ -108,6 +108,7 @@ struct dns_server_handle {
     uint32_t bind_ip;
     uint32_t stat_total;
     uint32_t stat_blocked;
+    uint32_t stat_dropped;
 
     uint8_t *bloom;
     size_t bloom_size_bytes;
@@ -995,15 +996,17 @@ void dns_server_task(void *pvParameters) {
                 glog("DNS sinkhole: forwarding to upstream " IPSTR "\n",
                      IP2STR(&(esp_ip4_addr_t){.addr = handle->upstream_dns}));
             } else if (handle->stat_total % 50 == 0) {
-                glog("Sinkhole: %lu queries, %lu blocked\n",
+                glog("Sinkhole: %lu queries, %lu blocked, %lu dropped\n",
                      (unsigned long)handle->stat_total,
-                     (unsigned long)handle->stat_blocked);
+                     (unsigned long)handle->stat_blocked,
+                     (unsigned long)handle->stat_dropped);
                 if (handle->auto_stats) {
                     char sbuf[256];
                     int sn = snprintf(sbuf, sizeof(sbuf),
-                        "total=%lu\nblocked=%lu\nupstream=" IPSTR "\nlog=%s\n",
+                        "total=%lu\nblocked=%lu\ndropped=%lu\nupstream=" IPSTR "\nlog=%s\n",
                         (unsigned long)handle->stat_total,
                         (unsigned long)handle->stat_blocked,
+                        (unsigned long)handle->stat_dropped,
                         IP2STR(&(esp_ip4_addr_t){.addr = handle->upstream_dns}),
                         handle->log_enabled ? "on" : "off");
                     if (sn > 0) sd_card_write_file(SINKHOLE_STATS_PATH, sbuf, (size_t)sn);
@@ -1037,7 +1040,13 @@ void dns_server_task(void *pvParameters) {
                 for (int i = 0; i < SINKHOLE_FWD_RING; i++) {
                     if (!fwd_ring[i].used) { slot = i; break; }
                 }
-                if (slot < 0) slot = 0;
+                if (slot < 0) {
+                    handle->stat_dropped++;
+                    if ((handle->stat_dropped & 0xFF) == 1) {
+                        glog("Sinkhole: forward ring full, dropping query for %s\n", name);
+                    }
+                    continue;
+                }
 
                 uint16_t upstream_id = ++next_fwd_id;
                 if (upstream_id == 0) upstream_id = ++next_fwd_id;

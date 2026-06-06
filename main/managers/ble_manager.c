@@ -381,13 +381,13 @@ static void restart_ble_stack(void) {
         }
         nimble_host_task_handle = NULL;
     }
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     // Now deinitialize the port
     nimble_port_deinit();
-    
+
     // Small delay before reinitializing
-    vTaskDelay(pdMS_TO_TICKS(50));
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     // log DMA-capable internal heap info right before NimBLE re-init
     size_t free_internal_dma_re = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT | MALLOC_CAP_DMA);
@@ -420,10 +420,17 @@ static void restart_ble_stack(void) {
     }
 
     ble_pending_clear = false;
-    
-    // Wait for NimBLE stack to be ready
-    vTaskDelay(pdMS_TO_TICKS(100));
-    
+
+    // Wait for NimBLE stack to be ready (matches BT_NIMBLE_HS_STOP_TIMEOUT_MS=2000)
+    TickType_t sync_start = xTaskGetTickCount();
+    while (!ble_hs_synced() &&
+           (xTaskGetTickCount() - sync_start) < pdMS_TO_TICKS(2000)) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    if (!ble_hs_synced()) {
+        ESP_LOGW(TAG_BLE, "NimBLE did not sync within 2 s after restart");
+    }
+
     ESP_LOGI(TAG_BLE, "BLE stack restarted successfully");
 }
 

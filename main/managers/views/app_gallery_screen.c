@@ -834,7 +834,13 @@ static void apps_plugin_reload_done(void *arg) {
  void apps_menu_create(void) {
     plugin_manager_init();
     apps_allow_plugin_icon_load = false;
-    rebuild_app_items(plugin_manager_count() > 0);
+    int boot_count = plugin_manager_count();
+    rebuild_app_items(boot_count > 0);
+    if (boot_count > 0) {
+        char msg[48];
+        snprintf(msg, sizeof(msg), "%d SD app%s ready", boot_count, boot_count == 1 ? "" : "s");
+        toast_show_duration(msg, TOAST_SUCCESS, 1000);
+    }
     refresh_apps_surface_colors();
     display_manager_fill_screen(apps_bg_color);
 
@@ -959,7 +965,10 @@ static void apps_plugin_reload_done(void *arg) {
         lv_obj_move_foreground(right_nav_btn);
     }
 
-    start_plugin_reload_async();
+    // No re-scan on open. The boot-time scan (run from the splash deferred
+    // task) is the canonical app discovery — re-running it here blanks the
+    // UI while plugin_manager_reload wipes s_apps[]. Users can refresh via
+    // reboot or the `apps reload` CLI command.
 }
 
 /**

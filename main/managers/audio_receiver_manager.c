@@ -37,11 +37,15 @@ typedef struct {
     volatile uint32_t tail;
 } ringbuf_t;
 
+static portMUX_TYPE s_rx_ringbuf_mux = portMUX_INITIALIZER_UNLOCKED;
+
 static struct {
     bool initialized;
     bool active;
     bool flush_requested;
     bool waiting_for_buffer;
+    bool stop_requested;
+    SemaphoreHandle_t decode_done_sem;
     esp_audio_simple_dec_handle_t simple_dec;
     TaskHandle_t decode_task;
     ringbuf_t rx_ringbuf;
@@ -60,10 +64,14 @@ static StaticTask_t *s_decode_task_tcb = NULL;
 
 static inline size_t ringbuf_count(ringbuf_t *rb)
 {
+    taskENTER_CRITICAL(&s_rx_ringbuf_mux);
     uint32_t head = rb->head;
     uint32_t tail = rb->tail;
-    if (head >= tail) return head - tail;
-    return AUDIO_RX_RINGBUF_SIZE - (tail - head);
+    size_t ret;
+    if (head >= tail) ret = head - tail;
+    else ret = AUDIO_RX_RINGBUF_SIZE - (tail - head);
+    taskEXIT_CRITICAL(&s_rx_ringbuf_mux);
+    return ret;
 }
 
 static size_t ringbuf_write(ringbuf_t *rb, const uint8_t *data, size_t len)
@@ -74,12 +82,14 @@ static size_t ringbuf_write(ringbuf_t *rb, const uint8_t *data, size_t len)
     size_t to_write = (len < free) ? len : free;
     if (to_write == 0 || !rb->buf) return 0;
 
+    taskENTER_CRITICAL(&s_rx_ringbuf_mux);
     uint32_t head = rb->head;
     for (size_t i = 0; i < to_write; i++) {
         rb->buf[head] = data[i];
         head = (head + 1) % AUDIO_RX_RINGBUF_SIZE;
     }
     rb->head = head;
+    taskEXIT_CRITICAL(&s_rx_ringbuf_mux);
     return to_write;
 }
 
@@ -89,12 +99,14 @@ static size_t ringbuf_read(ringbuf_t *rb, uint8_t *data, size_t len)
     size_t to_read = (len < count) ? len : count;
     if (to_read == 0 || !rb->buf) return 0;
 
+    taskENTER_CRITICAL(&s_rx_ringbuf_mux);
     uint32_t tail = rb->tail;
     for (size_t i = 0; i < to_read; i++) {
         data[i] = rb->buf[tail];
         tail = (tail + 1) % AUDIO_RX_RINGBUF_SIZE;
     }
     rb->tail = tail;
+    taskEXIT_CRITICAL(&s_rx_ringbuf_mux);
     return to_read;
 }
 
@@ -104,11 +116,13 @@ static size_t ringbuf_peek(ringbuf_t *rb, uint8_t *data, size_t len)
     size_t to_peek = (len < count) ? len : count;
     if (to_peek == 0 || !rb->buf) return 0;
 
+    taskENTER_CRITICAL(&s_rx_ringbuf_mux);
     uint32_t tail = rb->tail;
     for (size_t i = 0; i < to_peek; i++) {
         data[i] = rb->buf[tail];
         tail = (tail + 1) % AUDIO_RX_RINGBUF_SIZE;
     }
+    taskEXIT_CRITICAL(&s_rx_ringbuf_mux);
     return to_peek;
 }
 
@@ -128,8 +142,10 @@ esp_err_t audio_receiver_manager_start(void)
     s_recv.played_ms = 0;
     s_recv.played_pcm_bytes = 0;
     s_recv.output_channels = 2;
+    taskENTER_CRITICAL(&s_rx_ringbuf_mux);
     s_recv.rx_ringbuf.head = 0;
     s_recv.rx_ringbuf.tail = 0;
+    taskEXIT_CRITICAL(&s_rx_ringbuf_mux);
     ESP_LOGI(TAG, "Audio receiver started");
     return ESP_OK;
 }
@@ -139,8 +155,10 @@ void audio_receiver_manager_stop(void)
     if (!s_recv.initialized) return;
     s_recv.active = false;
     s_recv.waiting_for_buffer = false;
+    taskENTER_CRITICAL(&s_rx_ringbuf_mux);
     s_recv.rx_ringbuf.head = 0;
     s_recv.rx_ringbuf.tail = 0;
+    taskEXIT_CRITICAL(&s_rx_ringbuf_mux);
     ESP_LOGI(TAG, "Audio receiver stopped");
 }
 
@@ -149,8 +167,10 @@ void audio_receiver_manager_pause(void)
     if (!s_recv.initialized) return;
     s_recv.active = false;
     s_recv.flush_requested = true;
+    taskENTER_CRITICAL(&s_rx_ringbuf_mux);
     s_recv.rx_ringbuf.head = 0;
     s_recv.rx_ringbuf.tail = 0;
+    taskEXIT_CRITICAL(&s_rx_ringbuf_mux);
     s_recv.waiting_for_buffer = true;
     s_recv.played_ms = 0;
     s_recv.played_pcm_bytes = 0;
@@ -207,14 +227,25 @@ esp_err_t audio_receiver_manager_init(void)
     }
 
     memset(&s_recv, 0, sizeof(s_recv));
+    taskENTER_CRITICAL(&s_rx_ringbuf_mux);
     s_recv.rx_ringbuf.head = 0;
     s_recv.rx_ringbuf.tail = 0;
+    taskEXIT_CRITICAL(&s_rx_ringbuf_mux);
+
+    /* Decoder task uses this binary semaphore to signal a clean self-exit. */
+    if (s_recv.decode_done_sem == NULL) {
+        s_recv.decode_done_sem = xSemaphoreCreateBinary();
+    }
 
     /* Allocate ring buffer from PSRAM */
     s_recv.rx_ringbuf.buf = (uint8_t *)heap_caps_malloc(AUDIO_RX_RINGBUF_SIZE,
                                                         MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!s_recv.rx_ringbuf.buf) {
         ESP_LOGE(TAG, "Failed to allocate %lu byte ring buffer", (unsigned long)AUDIO_RX_RINGBUF_SIZE);
+        if (s_recv.decode_done_sem) {
+            vSemaphoreDelete(s_recv.decode_done_sem);
+            s_recv.decode_done_sem = NULL;
+        }
         return ESP_ERR_NO_MEM;
     }
 
@@ -273,8 +304,17 @@ void audio_receiver_manager_deinit(void)
     esp_comm_manager_register_stream_handler(COMM_STREAM_CHANNEL_AUDIO, NULL, NULL);
 
     if (s_recv.decode_task) {
-        vTaskDelete(s_recv.decode_task);
+        s_recv.stop_requested = true;
+        if (s_recv.decode_done_sem &&
+            xSemaphoreTake(s_recv.decode_done_sem, pdMS_TO_TICKS(1000)) != pdTRUE) {
+            ESP_LOGW(TAG, "Decode task did not exit in time; forcing delete");
+            vTaskDelete(s_recv.decode_task);
+        }
         s_recv.decode_task = NULL;
+        if (s_recv.decode_done_sem) {
+            vSemaphoreDelete(s_recv.decode_done_sem);
+            s_recv.decode_done_sem = NULL;
+        }
     }
 
     if (s_recv.rx_ringbuf.buf) {
@@ -366,7 +406,7 @@ static void audio_decode_task(void *arg)
     size_t buffered = 0;
     uint32_t last_stats_log = 0;
     uint32_t last_wait_log = 0;
-    while (1) {
+    while (!s_recv.stop_requested) {
         /* If not active, just wait for data to arrive */
         if (!s_recv.active) {
             vTaskDelay(pdMS_TO_TICKS(50));
@@ -552,6 +592,9 @@ cleanup:
         s_recv.simple_dec = NULL;
     }
 
+    if (s_recv.decode_done_sem) {
+        xSemaphoreGive(s_recv.decode_done_sem);
+    }
     ESP_LOGI(TAG, "Decode task exiting");
     vTaskDelete(NULL);
 }

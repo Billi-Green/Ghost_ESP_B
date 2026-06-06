@@ -1025,8 +1025,12 @@ void ghostchi_manager_add_xp(uint32_t amount) {
         snprintf(buf, sizeof(buf), "Level %u!", new_level);
         toast_show(buf, TOAST_SUCCESS);
         s_level_up_at_ms = now_ms();
+        if (s_storage_ready) {
+            s_xp_save_deadline_ms = 0;
+            save_state();
+        }
     }
-    if (s_storage_ready && s_xp_save_deadline_ms == 0) {
+    if (s_storage_ready && new_level <= old_level && s_xp_save_deadline_ms == 0) {
         s_xp_save_deadline_ms = now_ms() + 30000u;
     }
     if (s_storage_ready && s_xp_save_deadline_ms != 0 && now_ms() >= s_xp_save_deadline_ms) {

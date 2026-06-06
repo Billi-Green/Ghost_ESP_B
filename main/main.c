@@ -7,6 +7,7 @@
 #include "core/memory_debug.h"
 #include "managers/ap_manager.h"
 #include "managers/display_manager.h"
+#include "managers/ghostchi_manager.h"
 #include "managers/rgb_manager.h"
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
@@ -27,6 +28,7 @@
 #include "esp_random.h"
 #include "esp_sleep.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
 #include "esp_heap_caps.h"
@@ -377,6 +379,7 @@ static volatile uint32_t s_boot_done_mask = 0;
 #define BOOT_DONE_SD_ASSET  (1u << 0)
 #define BOOT_DONE_PLUGIN    (1u << 1)
 #define BOOT_DONE_ALL       (BOOT_DONE_SD_ASSET | BOOT_DONE_PLUGIN)
+#define BOOT_APP_SCAN_STACK_BYTES 32768
 
 static void splash_boot_step_done(uint32_t step) {
     uint32_t now;
@@ -404,7 +407,18 @@ static void boot_app_discovery_task(void *arg) {
     plugin_manager_set_progress_cb(NULL, NULL);
     splash_boot_step_done(BOOT_DONE_PLUGIN);
 #endif
-    vTaskDelete(NULL);
+    vTaskDeleteWithCaps(NULL);
+}
+
+static bool start_boot_app_discovery_task(void) {
+    BaseType_t ok = xTaskCreateWithCaps(boot_app_discovery_task, "BootApps",
+                                        BOOT_APP_SCAN_STACK_BYTES, NULL, 5,
+                                        NULL, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (ok != pdPASS) {
+        ESP_LOGW(TAG, "Boot app discovery task create failed; skipping");
+        return false;
+    }
+    return true;
 }
 
 static void deferred_sd_init_task(void *arg) {
@@ -426,6 +440,10 @@ static void deferred_sd_init_task(void *arg) {
         return;
     }
 
+    // Load persisted Ghostchi XP before the first status bar is shown after
+    // splash, otherwise the badge briefly starts from Lv1 until Ghostchi opens.
+    (void)ghostchi_manager_probe_storage();
+
 #if CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 #ifdef CONFIG_WITH_SCREEN
     splash_set_progress(-1.0f, "Saving core dump...");
@@ -445,13 +463,11 @@ static void deferred_sd_init_task(void *arg) {
         display_manager_run_on_lvgl(apply_main_menu_background_cb, NULL);
     }
 
-    // Hand off app discovery to its own task so the GAPP inflate can use
-    // the same fat stack the Apps menu allocates (32K PSRAM). The SD Init
-    // task stays at 6K — the inflate overflows that. The splash holds
-    // until both this step and BOOT_DONE_PLUGIN are signalled.
-    if (!xTaskCreate(boot_app_discovery_task, "BootApps", 32768,
-                     NULL, 5, NULL)) {
-        ESP_LOGW(TAG, "Boot app discovery task alloc failed; skipping");
+    // Hand off app discovery to its own PSRAM-backed static task so the GAPP
+    // inflate can use the same fat stack the Apps menu allocates. The SD Init
+    // task stays at 6K; the splash holds until both boot steps are signalled.
+    if (!start_boot_app_discovery_task()) {
+        splash_boot_step_done(BOOT_DONE_PLUGIN);
     }
     splash_boot_step_done(BOOT_DONE_SD_ASSET);
 #endif
@@ -692,7 +708,14 @@ void app_main(void) {
     ESP_LOGI(TAG, "Initializing display manager");
     MEASURE_INIT_RAM("Display Manager", display_manager_init() );
     ESP_LOGI(TAG, "Presenting splash screen");
-    MEASURE_INIT_RAM("Switch to splash view", display_manager_switch_view(&splash_view));
+    bool splash_ready = false;
+    MEASURE_INIT_RAM("Switch to splash view", splash_ready = display_manager_switch_view_and_wait_for_refresh(&splash_view));
+    if (splash_ready) {
+        set_backlight_brightness(100);
+    } else {
+        ESP_LOGW(TAG, "Splash first refresh did not complete; leaving backlight off");
+    }
+    MEASURE_INIT_RAM("Deferred display peripherals", display_manager_init_deferred_peripherals());
     if (settings_get_rgb_mode(&G_Settings) == RGB_MODE_RAINBOW) {
         display_manager_set_rainbow_mode(true);
     }

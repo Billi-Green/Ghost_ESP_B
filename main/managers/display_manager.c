@@ -111,6 +111,8 @@ static i2c_master_bus_handle_t s_touch_i2c_bus = NULL;
 QueueHandle_tt input_queue = NULL;
 
 static volatile bool g_low_i2c_mode = false;
+static bool s_deferred_peripherals_initialized = false;
+static void display_manager_set_backlight_raw(uint8_t percentage);
 
 #ifdef CONFIG_HAS_FUEL_GAUGE
 // Background polling logic moved to get_battery_info (lazy loading)
@@ -1636,23 +1638,6 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   axp2101_init();
 #endif
 
-#ifdef CONFIG_HAS_RTC_CLOCK
-  rtc_chip_type_t chip_type = (rtc_chip_type_t)CONFIG_RTC_CHIP_TYPE;
-  const char* chip_names[] = {"PCF8563", "DS1307", "DS3231"};
-  rtc_init(CONFIG_RTC_I2C_PORT, CONFIG_RTC_I2C_ADDRESS, chip_type);
-  ESP_LOGI(TAG, "RTC initialized: %s on I2C port %d at address 0x%02X (SDA: %d, SCL: %d)", 
-           chip_names[CONFIG_RTC_CHIP_TYPE], CONFIG_RTC_I2C_PORT, CONFIG_RTC_I2C_ADDRESS, 
-           CONFIG_RTC_I2C_SDA_PIN, CONFIG_RTC_I2C_SCL_PIN);
-#endif
-
-#ifdef CONFIG_HAS_FUEL_GAUGE
-  if (fuel_gauge_manager_init()) {
-    ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
-  } else {
-    ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
-  }
-#endif
-
 #ifdef CONFIG_USE_ENCODER
 #ifdef CONFIG_USE_IO_EXPANDER
     // Encoder on IO expander - use virtual pin numbers (P05=5, P06=6, P07=7)
@@ -1718,8 +1703,8 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
   last_touch_time = xTaskGetTickCount();
   is_backlight_dimmed = false;
 
-  // override any floating state and force it on
-  set_backlight_brightness(100);
+  // Keep the panel dark until the first real view has been drawn.
+  display_manager_set_backlight_raw(0);
 
 
 #ifndef CONFIG_JC3248W535EN_LCD
@@ -1809,6 +1794,22 @@ static void dm_switch_async_cb(void *param) {
 }
 
 typedef struct {
+  View *view;
+  SemaphoreHandle_t done;
+} dm_switch_wait_t;
+
+static void dm_switch_wait_async_cb(void *param) {
+  dm_switch_wait_t *call = (dm_switch_wait_t *)param;
+  if (!call) return;
+
+  display_manager_switch_view_internal(call->view);
+  lv_timer_handler();
+  lv_refr_now(NULL);
+  xSemaphoreGive(call->done);
+  free(call);
+}
+
+typedef struct {
   void (*fn)(void *);
   void *arg;
 } dm_lvgl_call_t;
@@ -1840,6 +1841,62 @@ void display_manager_switch_view(View *view) {
   call->fn = dm_switch_async_cb;
   call->arg = view;
   lv_async_call(dm_run_on_lvgl_async_cb, call);
+}
+
+bool display_manager_switch_view_and_wait_for_refresh(View *view) {
+  if (view == NULL) return false;
+
+  if (!lvgl_task_handle || xTaskGetCurrentTaskHandle() == lvgl_task_handle) {
+    display_manager_switch_view_internal(view);
+    lv_timer_handler();
+    lv_refr_now(NULL);
+    return true;
+  }
+
+  SemaphoreHandle_t done = xSemaphoreCreateBinary();
+  if (!done) {
+    display_manager_switch_view(view);
+    return false;
+  }
+
+  dm_switch_wait_t *call = malloc(sizeof(*call));
+  if (!call) {
+    vSemaphoreDelete(done);
+    display_manager_switch_view(view);
+    return false;
+  }
+  call->view = view;
+  call->done = done;
+
+  lv_async_call(dm_switch_wait_async_cb, call);
+  if (xSemaphoreTake(done, pdMS_TO_TICKS(2000)) != pdTRUE) {
+    ESP_LOGW(TAG, "Timed out waiting for first view refresh");
+    return false;
+  }
+  vSemaphoreDelete(done);
+  return true;
+}
+
+void display_manager_init_deferred_peripherals(void) {
+  if (s_deferred_peripherals_initialized) return;
+  s_deferred_peripherals_initialized = true;
+
+#ifdef CONFIG_HAS_RTC_CLOCK
+  rtc_chip_type_t chip_type = (rtc_chip_type_t)CONFIG_RTC_CHIP_TYPE;
+  const char* chip_names[] = {"PCF8563", "DS1307", "DS3231"};
+  rtc_init(CONFIG_RTC_I2C_PORT, CONFIG_RTC_I2C_ADDRESS, chip_type);
+  ESP_LOGI(TAG, "RTC initialized: %s on I2C port %d at address 0x%02X (SDA: %d, SCL: %d)",
+           chip_names[CONFIG_RTC_CHIP_TYPE], CONFIG_RTC_I2C_PORT, CONFIG_RTC_I2C_ADDRESS,
+           CONFIG_RTC_I2C_SDA_PIN, CONFIG_RTC_I2C_SCL_PIN);
+#endif
+
+#ifdef CONFIG_HAS_FUEL_GAUGE
+  if (fuel_gauge_manager_init()) {
+    ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
+  } else {
+    ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
+  }
+#endif
 }
 
 void display_manager_show_lockscreen(void) {
@@ -1917,7 +1974,7 @@ void display_manager_resume_lvgl_task(void) {
   if (lvgl_task_handle) vTaskResume(lvgl_task_handle);
 }
 
-void set_backlight_brightness(uint8_t percentage) {
+static void display_manager_set_backlight_raw(uint8_t percentage) {
     // Clamp to user setting
     uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);
 
@@ -1972,6 +2029,14 @@ void set_backlight_brightness(uint8_t percentage) {
     // ...
     set_keyboard_brightness(percentage == max_brightness ? 0xFF : 0x00);
 #endif
+}
+
+void set_backlight_brightness(uint8_t percentage) {
+    display_manager_set_backlight_raw(percentage);
+
+    uint8_t max_brightness = settings_get_max_screen_brightness(&G_Settings);
+    percentage = (percentage * max_brightness) / 100;
+    if (percentage > 100) percentage = 100;
 
     /*
      * The rest of your pause/resume logic stays exactly the same,

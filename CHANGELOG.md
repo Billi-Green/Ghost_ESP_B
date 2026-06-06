@@ -2,6 +2,12 @@
 
 ## Revival v2.0-pre4
 
+ - Fixed DIAL bind overflowing `gsession`/`SID`/`listID` with server-controlled bytes (bounded `snprintf` + length check)
+ - Fixed DNS sinkhole silently clobbering forward ring slot 0 under load (drops the query and counts it as `stat_dropped` instead)
+ - Fixed audio receiver ring buffer producer/consumer race by serializing `head`/`tail` updates with a `portMUX`
+ - Fixed audio decode task leaking decoder buffers on deinit by adding a self-exit semaphore so the task can free its own state
+ - Fixed BLE stack restart racing NimBLE stop/deinit with 50 ms sleeps and a blind 100 ms post-init wait; now 200 ms gaps and a `ble_hs_synced()` poll
+ - Fixed Wigle "already uploaded" check stalling uploads on long histories by caching the on-disk log in RAM (32×64-byte rows, heap-allocated on first use from PSRAM; falls back to a one-shot SD scan on cache miss)
  - Fixed Waveshare 7-inch (ESP32-S3-Touch-LCD-7) backlight and touch
  - Expanded Ghostchi XP system from 3 sources to 27 across WiFi, BLE, GPS, IR, NFC, SubGHz, BadUSB, attacks, scans, games, plugins, and settings
  - Expanded Ghostchi levels from 10 to 50 with a smooth quadratic curve
@@ -28,6 +34,7 @@
   - Added on-device PCAP browser with hc22000 markers under WiFi > Capture
   - Added one-tap PCAP to hc22000 export (PMKID + M2/M3 handshake detection)
   - Added a small progress bar to the splash so SD mount, asset pack load, and app scan no longer freeze the display while booting
+  - Reduced the brief white screen before splash by keeping the backlight off until the first splash frame is drawn
 
 ## Revival v2.0-pre3
 

@@ -91,6 +91,16 @@ bool display_manager_register_view(View *view);
 void display_manager_switch_view(View *view);
 
 /**
+ * @brief Switch to a new view on the LVGL task and wait for the first refresh.
+ */
+bool display_manager_switch_view_and_wait_for_refresh(View *view);
+
+/**
+ * @brief Initialize slower display-adjacent peripherals after the first UI frame.
+ */
+void display_manager_init_deferred_peripherals(void);
+
+/**
  * @brief Switch to the lockscreen and remember the current view for unlock.
  */
 void display_manager_show_lockscreen(void);
