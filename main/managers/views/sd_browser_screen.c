@@ -490,7 +490,11 @@ static void sd_browser_add_row(const char *label, sd_browser_row_type_t type, in
     rows[row_index].type = type;
     rows[row_index].entry_index = entry_index;
     lv_obj_t *btn = options_view_add_item(browser_options, label, sd_browser_row_click_cb, NULL);
-    if (btn) lv_obj_set_user_data(btn, (void *)(intptr_t)row_index);
+    if (btn) {
+        lv_obj_set_user_data(btn, (void *)(intptr_t)row_index);
+        lv_obj_t *lbl = lv_obj_get_child(btn, 0);
+        if (lbl) lv_label_set_long_mode(lbl, LV_LABEL_LONG_SCROLL);
+    }
     row_count++;
 }
 
