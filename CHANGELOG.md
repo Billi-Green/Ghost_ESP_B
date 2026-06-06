@@ -2,48 +2,53 @@
 
 ## Revival v2.0-pre4
 
- - Fixed DIAL bind overflowing `gsession`/`SID`/`listID` with server-controlled bytes (bounded `snprintf` + length check)
- - Fixed DNS sinkhole silently clobbering forward ring slot 0 under load (drops the query and counts it as `stat_dropped` instead)
- - Fixed audio receiver ring buffer producer/consumer race by serializing `head`/`tail` updates with a `portMUX`
- - Fixed audio decode task leaking decoder buffers on deinit by adding a self-exit semaphore so the task can free its own state
- - Fixed BLE stack restart racing NimBLE stop/deinit with 50 ms sleeps and a blind 100 ms post-init wait; now 200 ms gaps and a `ble_hs_synced()` poll
- - Fixed Wigle "already uploaded" check stalling uploads on long histories by caching the on-disk log in RAM (32×64-byte rows, heap-allocated on first use from PSRAM; falls back to a one-shot SD scan on cache miss)
- - Fixed Waveshare 7-inch (ESP32-S3-Touch-LCD-7) backlight and touch
- - Expanded Ghostchi XP system from 3 sources to 27 across WiFi, BLE, GPS, IR, NFC, SubGHz, BadUSB, attacks, scans, games, plugins, and settings
- - Expanded Ghostchi levels from 10 to 50 with a smooth quadratic curve
- - Added persistent level badge in the status bar visible on every screen
- - Added level-up toast notification
- - Added Ghostchi activity counters to state file
- - Added Wardriving settings for per-chip hop intervals and weighted 5GHz channel hopping, synced over GhostLink
- - Replaced on/off settings rows with iOS-style toggles for a slightly nicer feel
- - Added Settings > Info with a read-only device, runtime, build, and credits page sourced from the `chipinfo` data path
- - Fixed Invert Colors setting not refreshing the screen until something else triggered a redraw
- - Added more Display Timeout options: 15s, 2m, and 5m
- - Slimmed and rounded the terminal's bottom touch controls to match the rest of the UI
- - Themed the terminal's input bar and back button via the palette instead of hardcoded colors
- - Cached the DualComm line check per row to keep the split-view terminal smooth
+### Added
  - Added 5 new Ghostchi images. "Banshee" by @pr3
- - Fixed `help` (no args) printing the category list twice
- - Fixed duplicate `powerprinter` entry in `help printer`
- - Fixed `chameleon` (no args) double-printing its help on the on-screen terminal
- - Fixed `select -a 1,2,3` corrupting later `select` calls by switching to a re-entrant, non-mutating tokenizer
- - Stopped logging unknown commands to command history so typos no longer pollute arrow-up
- - Made command lookup case-insensitive (`SCANAP` now works)
- - Reduced `sd tree` walker memory from ~16 KB to ~600 B (no BSS) and made it work on devices without PSRAM
- - Made Ghostchi passive by default, added a passive/aggressive mode toggle on pages 1 & 2 of the Ghostchi view
- - Added on-device PCAP browser with hc22000 markers under WiFi > Capture
- - Added one-tap PCAP to hc22000 export (PMKID + M2/M3 handshake detection)
  - Added a small progress bar to the boot screen so SD mount, asset pack load, and app scan no longer happen while using the device
- - Reduced the brief white screen before splash by keeping the backlight off until the first splash frame is drawn
  - Added an SD Browser app for paginated file/folder browsing, rename, and delete actions
- - Plugin icons now recolor to their manifest accent color, unless overridden by an asset pack
- - Lockscreen shows the asset pack background instead of a solid color
+ - Added Ghostchi activity counters to state file
+ - Added level-up toast notification
+ - Added more Display Timeout options: 15s, 2m, and 5m
+ - Added on-device PCAP browser with hc22000 markers under WiFi > Capture
+ - Added PCAP to hc22000 export on displays
+ - Added persistent level badge in the status bar visible on every screen
+ - Added Settings > Info with a read-only device, runtime, build, and credits page sourced from `chipinfo`
+ - Added Wardriving settings for per-chip hop intervals and weighted 5GHz channel hopping, synced over GhostLink
+
+### Changed
+ - Apps Gallery now renders the asset pack background image
+ - Cached the DualComm line check per row to keep the split-view terminal smooth
+ - Expanded Ghostchi levels from 10 to 50 with a smooth quadratic curve
+ - Expanded Ghostchi XP system from 3 sources to 27 across WiFi, BLE, GPS, IR, NFC, SubGHz, BadUSB, attacks, scans, games, plugins, and settings
+ - Larger lockscreen numpad on taller displays
  - Lockscreen numpad keys are now solid with proper contrast on focused buttons
  - Lockscreen prompt and PIN dots have a dark backdrop for readability
- - Larger lockscreen numpad on taller displays
- - Removed "SD card mounted" toast during boot
+ - Lockscreen shows the asset pack background instead of a solid color
+ - Made command lookup case-insensitive (`SCANAP` now works)
+ - Made Ghostchi passive by default, added a passive/aggressive mode toggle on pages 1 & 2 of the Ghostchi view
  - Moved Clock, Compass, ENV-III, and Accelerometer from the main menu to the Apps Gallery
- - Apps Gallery now renders the asset pack background image
+ - Plugin icons now recolor to their manifest accent color, unless overridden by an asset pack
+ - Reduced `sd tree` walker memory from ~16 KB to ~600 B and made it work on devices without PSRAM
+ - Reduced the brief white screen before splash by keeping the backlight off until the first splash frame is drawn
+ - Removed "SD card mounted" toast during boot
+ - Replaced on/off settings rows with iOS style toggles for a slightly nicer feel
+ - Slimmed and rounded the terminal's bottom touch controls to match the rest of the UI
+ - Stopped logging unknown commands to command history so typos no longer pollute arrow-up
+ - Themed the terminal's input bar and back button via the palette instead of hardcoded colors
+
+### Fixed
+ - Fixed `chameleon` (no args) double-printing its help on the on-screen terminal
+ - Fixed `help` (no args) printing the category list twice
+ - Fixed `select -a 1,2,3` corrupting later `select` calls by switching to a re-entrant, non-mutating tokenizer
+ - Fixed audio decode task leaking decoder buffers on deinit by adding a self-exit semaphore so the task can free its own state
+ - Fixed audio receiver ring buffer producer/consumer race by serializing `head`/`tail` updates with a `portMUX`
+ - Fixed BLE stack restart racing NimBLE stop/deinit
+ - Fixed DIAL bind overflowing `gsession`/`SID`/`listID` with server-controlled bytes
+ - Fixed DNS sinkhole silently clobbering forward ring slot 0 under load
+ - Fixed duplicate `powerprinter` entry in `help printer`
+ - Fixed Invert Colors setting not refreshing the screen until something else triggered a redraw
+ - Fixed Waveshare 7-inch (ESP32-S3-Touch-LCD-7) backlight and touch
+ - Fixed Wigle "already uploaded" check stalling uploads on long histories by caching the on-disk log in RAM
 
 ## Revival v2.0-pre3
 

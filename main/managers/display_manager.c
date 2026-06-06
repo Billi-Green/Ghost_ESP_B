@@ -3137,7 +3137,7 @@ void processEvent() {
 /* ---- scroll coalescing ------------------------------------------------- */
 
 #define SCROLL_COALESCE_MAX_STEP 64
-#define SCROLL_FLUSH_INTERVAL_MS 33
+#define SCROLL_FLUSH_INTERVAL_MS 16
 
 typedef struct {
   lv_obj_t *target;

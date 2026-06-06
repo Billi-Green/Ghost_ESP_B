@@ -142,20 +142,20 @@ static void clock_event_handler(InputEvent *event) {
 }
 
 static lv_obj_t *create_clock_label(lv_obj_t *parent, const char *text, const lv_font_t *font, lv_color_t color, bool asset_bg) {
-    if (asset_bg) {
-        lv_obj_t *shadow = lv_label_create(parent);
-        lv_label_set_text(shadow, text);
-        lv_obj_set_style_text_font(shadow, font, 0);
-        lv_obj_set_style_text_color(shadow, lv_color_black(), 0);
-        lv_obj_set_style_opa(shadow, LV_OPA_70, 0);
-        lv_obj_set_style_translate_x(shadow, 1, 0);
-        lv_obj_set_style_translate_y(shadow, 1, 0);
-    }
-
     lv_obj_t *label = lv_label_create(parent);
     lv_label_set_text(label, text);
     lv_obj_set_style_text_font(label, font, 0);
     lv_obj_set_style_text_color(label, color, 0);
+    /* On top of an asset-pack background, give the label a dark pill behind
+     * it so it stays readable no matter what image is showing through. Same
+     * look as the lockscreen prompt/PIN dots. */
+    if (asset_bg) {
+        lv_obj_set_style_bg_color(label, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(label, LV_OPA_60, 0);
+        lv_obj_set_style_radius(label, 3, 0);
+        lv_obj_set_style_pad_hor(label, 6, 0);
+        lv_obj_set_style_pad_ver(label, 1, 0);
+    }
     return label;
 }
 
@@ -170,7 +170,10 @@ void clock_create(void) {
     // Get current theme colors for text only
     uint8_t theme = settings_get_menu_theme(&G_Settings);
     bool asset_bg = asset_pack_get_background_tile() != NULL;
-    lv_color_t text_color = asset_bg ? lv_color_black() : lv_color_hex(theme_palette_get_accent(theme));
+    /* White text on a dark pill when the asset pack image is showing, so the
+     * labels stay readable on any background. Accent color on the flat theme
+     * background. */
+    lv_color_t text_color = asset_bg ? lv_color_hex(0xFFFFFF) : lv_color_hex(theme_palette_get_accent(theme));
 
     lv_color_t bg_color = lv_color_hex(theme_palette_get_background(theme));
     display_manager_fill_screen(bg_color);

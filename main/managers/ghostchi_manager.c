@@ -36,6 +36,12 @@
 #define GHOSTCHI_COOLDOWN_IDLE_MS 1500u
 #define GHOSTCHI_COOLDOWN_SUCCESS_MS 1800u
 
+/* Hard ceiling on XP earned in a single session. Without this, a long
+ * unattended session could grind the ghost to the level cap purely off
+ * per-cycle XP. Combined with the per-level multiplier below, a single
+ * session is bounded even with a fresh character. */
+#define GHOSTCHI_SESSION_XP_CAP 400u
+
 #if CONFIG_SPIRAM
 #define GHOSTCHI_SESSION_LOG_BUFFER_SIZE 2048u
 #else
@@ -135,6 +141,7 @@ static uint32_t s_total_gps_fixes = 0;
 static uint32_t s_total_pcaps_saved = 0;
 static uint32_t s_total_new_aps_learned = 0;
 static uint32_t s_xp_save_deadline_ms = 0;
+static uint32_t s_session_xp_earned = 0;
 static ghostchi_strategy_t s_active_strategy;
 /* Default is passive — Ghostchi now only does passive listening unless the
  * user explicitly opts into aggressive (deauth-burst) mode. The flag is
@@ -659,12 +666,26 @@ static void open_session_log(void) {
 
 static ghostchi_strategy_t choose_strategy(uint16_t ap_visible) {
     ghostchi_strategy_t cfg;
-    if (ap_visible >= 18) {
-        cfg.passive_ms = 2200; cfg.settle_ms = 850;  cfg.deauth_ms = 450;
-    } else if (ap_visible <= 5) {
-        cfg.passive_ms = 5000; cfg.settle_ms = 1500; cfg.deauth_ms = 850;
+    /* Passive mode rides out a long listen window per target — there's
+     * no deauth to force a reauth, so we wait for a real client. Aggressive
+     * mode only needs a short window because the deauth burst right after
+     * produces the EAPOL within a few hundred ms. */
+    if (s_aggressive_mode) {
+        if (ap_visible >= 18) {
+            cfg.passive_ms = 2200; cfg.settle_ms = 850;  cfg.deauth_ms = 450;
+        } else if (ap_visible <= 5) {
+            cfg.passive_ms = 5000; cfg.settle_ms = 1500; cfg.deauth_ms = 850;
+        } else {
+            cfg.passive_ms = 3400; cfg.settle_ms = 1200; cfg.deauth_ms = 650;
+        }
     } else {
-        cfg.passive_ms = 3400; cfg.settle_ms = 1200; cfg.deauth_ms = 650;
+        if (ap_visible >= 18) {
+            cfg.passive_ms = 30000; cfg.settle_ms = 850;  cfg.deauth_ms = 450;
+        } else if (ap_visible <= 5) {
+            cfg.passive_ms = 60000; cfg.settle_ms = 1500; cfg.deauth_ms = 850;
+        } else {
+            cfg.passive_ms = 45000; cfg.settle_ms = 1200; cfg.deauth_ms = 650;
+        }
     }
     /* Deauth bursts are gated behind aggressive mode. In passive mode the
      * ghost still sweeps + listens, but the LOCK → STIM transition is
@@ -926,7 +947,12 @@ void ghostchi_manager_tick(void) {
                         ++s_snapshot.attempts;
                         xSemaphoreGive(s_lock);
                     }
-                    ghostchi_manager_add_xp(3);
+                    /* Target lock grants less XP in passive mode — the loop
+                     * cycles every ~10–25s in passive (no deauth), so a
+                     * flat +3/cycle would grind a fresh character to the
+                     * cap in a few hours unattended. Aggressive keeps the
+                     * old value since cycles are much rarer. */
+                    ghostchi_manager_add_xp(s_aggressive_mode ? 3u : 1u);
                     session_log("target=%02x:%02x:%02x:%02x:%02x:%02x ch=%u score=%u reason=%s\n",
                                 s_current_target.ap.bssid[0], s_current_target.ap.bssid[1], s_current_target.ap.bssid[2],
                                 s_current_target.ap.bssid[3], s_current_target.ap.bssid[4], s_current_target.ap.bssid[5],
@@ -1003,6 +1029,17 @@ static unsigned int ghostchi_level_from_xp(uint32_t xp) {
     return (unsigned int)(sizeof(tbl) / sizeof(tbl[0]) - 1);
 }
 
+/* Per-level XP multiplier (%). High levels earn less XP per action so
+ * the curve slows down before the cap. Bounded to a small floor so a
+ * late-game action still gives a token reward. */
+static unsigned int ghostchi_xp_multiplier(unsigned int level) {
+    if (level <= 5)  return 100;
+    if (level <= 10) return 80;
+    if (level <= 20) return 50;
+    if (level <= 30) return 30;
+    return 15;
+}
+
 /* How long the post-level-up "celebration" mood lasts (ms). Kept long
  * enough that a user looking away (e.g. mid-attack, eyes on the LCD
  * target list) still catches it when they glance back. The UI screen
@@ -1018,7 +1055,23 @@ static uint32_t s_level_up_at_ms = 0;
 void ghostchi_manager_add_xp(uint32_t amount) {
     if (amount == 0) return;
     unsigned int old_level = ghostchi_level_from_xp(s_total_xp);
-    s_total_xp += amount;
+
+    /* Diminishing returns: high levels earn a fraction of the base XP. */
+    unsigned int mult = ghostchi_xp_multiplier(old_level);
+    uint32_t scaled = (uint32_t)((uint64_t)amount * mult / 100u);
+    if (scaled == 0) scaled = 1u;  /* always grant at least 1 XP per call */
+
+    /* Per-session ceiling: clamp to the remaining headroom. A single
+     * session can never push total XP by more than GHOSTCHI_SESSION_XP_CAP,
+     * regardless of how long the manager runs. */
+    uint32_t room = (s_session_xp_earned < GHOSTCHI_SESSION_XP_CAP)
+                        ? (GHOSTCHI_SESSION_XP_CAP - s_session_xp_earned)
+                        : 0u;
+    if (scaled > room) scaled = room;
+
+    s_total_xp += scaled;
+    s_session_xp_earned += scaled;
+
     unsigned int new_level = ghostchi_level_from_xp(s_total_xp);
     if (new_level > old_level) {
         char buf[32];
@@ -1105,6 +1158,7 @@ bool ghostchi_manager_start(void) {
 
     s_running = true;
     ++s_total_sessions;
+    s_session_xp_earned = 0;
     s_last_session_end_s = 0;
     s_last_session_end_valid = false;
     ghostchi_manager_add_xp(10);
