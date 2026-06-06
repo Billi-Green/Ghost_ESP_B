@@ -5,11 +5,23 @@
 #include "managers/views/plugin_runner_view.h"
 #include "managers/views/sd_browser_screen.h"
 #include "managers/views/terminal_screen.h"
+#ifdef CONFIG_HAS_COMPASS
+#include "managers/views/compass_screen.h"
+#endif
+#ifdef CONFIG_HAS_ENVIII
+#include "managers/views/enviii_screen.h"
+#endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+#include "managers/views/accelerometer_screen.h"
+#endif
+#include "managers/views/clock_screen.h"
 #ifdef CONFIG_HAS_AUDIO_PLAYER
 #include "managers/views/audio_player_screen.h"
 #endif
 
 LV_IMG_DECLARE(speaker_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48);
+LV_IMG_DECLARE(enviii);
+LV_IMG_DECLARE(accelerometer_icon);
 
 #include "managers/plugin_manager.h"
 #include "managers/settings_manager.h"
@@ -46,6 +58,7 @@ static void select_app_item(int index, bool slide_left);
 static void apps_plugin_reload_done(void *arg);
 
 lv_obj_t *apps_container;
+static lv_obj_t *apps_root = NULL;
 static lv_obj_t *current_app_obj = NULL;
 static int selected_app_index = 0;
 
@@ -100,9 +113,43 @@ static const app_item_t builtin_app_items[] = {
         .palette_index = 2,
         .view = &ghostchi_view,
     },
+    {
+        .name = "Clock",
+        .asset_key = "clock_icon",
+        .icon = &clock_icon,
+        .palette_index = 4,
+        .view = &clock_view,
+    },
+#ifdef CONFIG_HAS_COMPASS
+    {
+        .name = "Compass",
+        .asset_key = "compass",
+        .icon = &compass,
+        .palette_index = 2,
+        .view = &compass_view,
+    },
+#endif
+#ifdef CONFIG_HAS_ENVIII
+    {
+        .name = "ENV-III",
+        .asset_key = "enviii",
+        .icon = &enviii,
+        .palette_index = 2,
+        .view = &enviii_view,
+    },
+#endif
+#ifdef CONFIG_HAS_ACCELEROMETER
+    {
+        .name = "Accelerometer",
+        .asset_key = "accelerometer_icon",
+        .icon = &accelerometer_icon,
+        .palette_index = 4,
+        .view = &accelerometer_view,
+    },
+#endif
 };
 
-#define MAX_APP_GALLERY_ITEMS (PLUGIN_APP_MAX_COUNT + 5)
+#define MAX_APP_GALLERY_ITEMS (PLUGIN_APP_MAX_COUNT + 9)
 static app_item_t *app_items = NULL;
 static int num_apps = 0;
 lv_obj_t *back_button = NULL;
@@ -899,6 +946,7 @@ static void apps_plugin_reload_done(void *arg) {
     apps_allow_plugin_icon_load = true;
     if (selected_back) selected_app_index = num_apps > 0 ? num_apps - 1 : 0;
     render_app_items();
+    gui_screen_apply_background(apps_menu_view.root);
 
     int plugin_count = plugin_manager_count();
     if (plugin_count > 0) {
@@ -936,8 +984,17 @@ static void apps_plugin_reload_done(void *arg) {
 
     const char *title = (LV_VER_RES > 320 ? "Apps Menu" : "Apps");
 
-    apps_container = gui_screen_create_root(NULL, title, apps_bg_color, LV_OPA_TRANSP);
-    apps_menu_view.root = apps_container;
+    apps_root = gui_screen_create_root(NULL, title, apps_bg_color, LV_OPA_TRANSP);
+    apps_menu_view.root = apps_root;
+
+    apps_container = lv_obj_create(apps_root);
+    lv_obj_set_size(apps_container, LV_HOR_RES, LV_VER_RES);
+    lv_obj_clear_flag(apps_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(apps_container, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_style_bg_opa(apps_container, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(apps_container, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(apps_container, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(apps_container, 0, LV_PART_MAIN);
 
     init_app_colors();
 
@@ -1037,6 +1094,7 @@ static void apps_plugin_reload_done(void *arg) {
 
     selected_app_index = 0;
     render_app_items();
+    gui_screen_apply_background(apps_menu_view.root);
 
     if (left_nav_btn) {
         lv_coord_t old_y = lv_obj_get_y(left_nav_btn);
@@ -1060,8 +1118,9 @@ static void apps_plugin_reload_done(void *arg) {
  */
 void apps_menu_destroy(void) {
     apps_cancel_carousel_anims();
-    if (apps_container) {
-        lvgl_obj_del_safe(&apps_container);
+    if (apps_root) {
+        lvgl_obj_del_safe(&apps_root);
+        apps_container = NULL;
         apps_menu_view.root = NULL;
         current_app_obj = NULL;
         back_button = NULL;

@@ -42,6 +42,8 @@
  - Lockscreen prompt and PIN dots have a dark backdrop for readability
  - Larger lockscreen numpad on taller displays
  - Removed "SD card mounted" toast during boot
+ - Moved Clock, Compass, ENV-III, and Accelerometer from the main menu to the Apps Gallery
+ - Apps Gallery now renders the asset pack background image
 
 ## Revival v2.0-pre3
 

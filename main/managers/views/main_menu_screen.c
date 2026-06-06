@@ -55,9 +55,7 @@ uint32_t theme_palette_get_surface(uint8_t theme);
 uint32_t theme_palette_get_text(uint8_t theme);
 
 LV_IMG_DECLARE(dualcomm);
-LV_IMG_DECLARE(accelerometer_icon);
 LV_IMG_DECLARE(lan_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48);
-LV_IMG_DECLARE(enviii);
 LV_IMG_DECLARE(nrf24);
 LV_IMG_DECLARE(subghz);
 LV_IMG_DECLARE(lock);
@@ -146,16 +144,6 @@ menu_item_t menu_items[] = {
 #endif
     {"GhostLink", "dualcomm", &dualcomm, 1, {{0}}},
     {"Ethernet", "lan_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48", &lan_50dp_FFFFFF_FILL0_wght400_GRAD0_opsz48, 1, {{0}}},
-    {"Clock", "clock_icon", &clock_icon, 4, {{0}}},
-#ifdef CONFIG_HAS_COMPASS
-    {"Compass", "compass", &compass, 2, {{0}}},
-#endif
-#ifdef CONFIG_HAS_ENVIII
-    {"ENV-III", "enviii", &enviii, 2, {{0}}},
-#endif
-#ifdef CONFIG_HAS_ACCELEROMETER
-    {"Accelerometer", "accelerometer_icon", &accelerometer_icon, 4, {{0}}},
-#endif
     {"Apps", "GESPAppGallery", &GESPAppGallery, 3, {{0}}}, // applies to all boards
     {"Lock", "lock", &lock, 5, {{0}}}, // Lock Device
     {"Settings", "settings_icon", &settings_icon, 5, {{0}}}, // applies to all boards
@@ -926,15 +914,6 @@ static void handle_menu_item_selection(int item_index) {
 #endif
         {"WiFi", OT_Wifi, &options_menu_view},
         {"GPS", OT_GPS, &options_menu_view},
-#ifdef CONFIG_HAS_COMPASS
-        {"Compass", 0, &compass_view},
-#endif
-#ifdef CONFIG_HAS_ENVIII
-        {"ENV-III", 0, &enviii_view},
-#endif
-#ifdef CONFIG_HAS_ACCELEROMETER
-        {"Accelerometer", 0, &accelerometer_view},
-#endif
 #if CONFIG_HAS_INFRARED
         {"Infrared", 0, &infrared_view},
 #endif
@@ -951,7 +930,6 @@ static void handle_menu_item_selection(int item_index) {
         {"Audio", 0, &audio_player_view},
 #endif
         {"Apps", 0, &apps_menu_view},
-        {"Clock", 0, &clock_view},
         {"Lock", 0, &lockscreen_view},
         {"Settings", OT_Settings, &options_menu_view},
         {"GhostLink", OT_DualComm, &options_menu_view},
@@ -978,10 +956,6 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("BLE Menu");
             } else if (strcmp(menu_actions[i].name, "GPS") == 0) {
                 status_display_show_status("GPS Menu");
-            } else if (strcmp(menu_actions[i].name, "Compass") == 0) {
-                status_display_show_status("Compass");
-            } else if (strcmp(menu_actions[i].name, "ENV-III") == 0) {
-                status_display_show_status("ENV-III");
             } else if (strcmp(menu_actions[i].name, "Infrared") == 0) {
                 status_display_show_status("Infrared Menu");
             } else if (strcmp(menu_actions[i].name, "NFC") == 0) {
@@ -992,8 +966,6 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("SubGHz");
             } else if (strcmp(menu_actions[i].name, "Apps") == 0) {
                 status_display_show_status("Apps Menu");
-            } else if (strcmp(menu_actions[i].name, "Clock") == 0) {
-                status_display_show_status("Clock");
             } else if (strcmp(menu_actions[i].name, "Settings") == 0) {
                 status_display_show_status("Settings");
             } else if (strcmp(menu_actions[i].name, "GhostLink") == 0) {
@@ -1002,8 +974,6 @@ static void handle_menu_item_selection(int item_index) {
                 status_display_show_status("Ethernet");
             } else if (strcmp(menu_actions[i].name, "BadUSB") == 0) {
                 status_display_show_status("BadUSB");
-            } else if (strcmp(menu_actions[i].name, "Accelerometer") == 0) {
-                status_display_show_status("Accelerometer");
             } else if (strcmp(menu_actions[i].name, "Audio") == 0) {
                 status_display_show_status("Audio Player");
             } else if (strcmp(menu_actions[i].name, "Lock") == 0) {
