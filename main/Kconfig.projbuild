@@ -189,6 +189,17 @@ menu "Ghost ESP Options"
 
     menu "Misc Options"
 
+        config GHOSTESP_OTA_ENABLE
+            bool "Enable OTA background checks and OTA menu"
+            default y
+            help
+                Enable the OTA manager, peer OTA, and the OTA background check
+                task. Only meaningful on boards with an OTA-capable (A/B)
+                partition table; boards with a factory-only layout (e.g.
+                Sputnik_SCR) should disable this to drop the OTA task and UI.
+                GHOSTESP_OTA_SUPPORTED additionally requires an 8MB/16MB flash
+                size.
+
         config USE_JOYSTICK
             bool "Enable Joystick"
             default n

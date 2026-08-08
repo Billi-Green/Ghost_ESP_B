@@ -9,7 +9,10 @@
 // Compile-time OTA eligibility: only 8MB/16MB boards ship a dual-partition
 // (A/B) table (see partitions_ota_*.csv). 4MB boards, and the flash-XIP C5
 // boards that can't spare the napps reservation twice, stay manual-flash-only.
-#define GHOSTESP_OTA_SUPPORTED (CONFIG_ESPTOOLPY_FLASHSIZE_8MB || CONFIG_ESPTOOLPY_FLASHSIZE_16MB)
+// Boards that must not do OTA at all (e.g. Sputnik_SCR, factory-only layout)
+// set CONFIG_GHOSTESP_OTA_ENABLE=n.
+#define GHOSTESP_OTA_SUPPORTED \
+    ((CONFIG_ESPTOOLPY_FLASHSIZE_8MB || CONFIG_ESPTOOLPY_FLASHSIZE_16MB) && CONFIG_GHOSTESP_OTA_ENABLE)
 
 typedef enum {
     OTA_STATE_IDLE = 0,

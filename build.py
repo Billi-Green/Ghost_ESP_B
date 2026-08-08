@@ -389,7 +389,8 @@ def get_build_targets() -> List[Dict[str, str]]:
         {"name": "Lolin_S3_Pro", "idf_target": "esp32s3", "sdkconfig_file": "configs/sdkconfig.lolins3pro", "zip_name": "Lolin_S3_Pro.zip"},
         {"name": "Cardputer ADV", "idf_target": "esp32s3", "sdkconfig_file": "configs/sdkconfig.cardputeradv", "zip_name": "CardputerADV.zip"},
         {"name": "Marauder V8", "idf_target": "esp32c5", "sdkconfig_file": "configs/sdkconfig.MarauderV8", "zip_name": "MarauderV8.zip"},
-        {"name": "Marauder Pancake", "idf_target": "esp32c5", "sdkconfig_file": "configs/sdkconfig.Pancake", "zip_name": "MarauderPancake.zip"}
+        {"name": "Marauder Pancake", "idf_target": "esp32c5", "sdkconfig_file": "configs/sdkconfig.Pancake", "zip_name": "MarauderPancake.zip"},
+        {"name": "Sputnik SCR", "idf_target": "esp32c5", "sdkconfig_file": "configs/sdkconfig.Sputnik_SCR", "zip_name": "Sputnik_SCR.zip"}
     ]
 
 def validate_project_directory() -> bool:

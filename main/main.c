@@ -991,8 +991,14 @@ void app_main(void) {
     // handled by the separate boot_app_discovery_task spawned from inside
     // deferred_sd_init_task.
     {
+#if CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+        BaseType_t sd_task_rc = xTaskCreateWithCaps(
+            deferred_sd_init_task, "SD Init", 6144, NULL, tskIDLE_PRIORITY + 1,
+            NULL, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
         BaseType_t sd_task_rc = xTaskCreate(deferred_sd_init_task, "SD Init", 6144, NULL,
                                             tskIDLE_PRIORITY + 1, NULL);
+#endif
         if (sd_task_rc != pdPASS) {
             ESP_LOGE(TAG, "Failed to create SD Init task");
         }
@@ -1000,8 +1006,14 @@ void app_main(void) {
 
 #if GHOSTESP_OTA_SUPPORTED
     {
+#if CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+        BaseType_t ota_task_rc = xTaskCreateWithCaps(
+            ota_background_check_task, "OTA Check", 6144, NULL, tskIDLE_PRIORITY + 1,
+            NULL, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#else
         BaseType_t ota_task_rc = xTaskCreate(ota_background_check_task, "OTA Check", 6144, NULL,
                                               tskIDLE_PRIORITY + 1, NULL);
+#endif
         if (ota_task_rc != pdPASS) {
             ESP_LOGE(TAG, "Failed to create OTA background check task");
         }

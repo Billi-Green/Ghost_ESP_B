@@ -175,6 +175,12 @@ static int disp_spi_get_mode(void)
     if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "NM-CYD-C5") == 0) {
         return 0;
     }
+    /* Sputnik 1.9" ST7789T3 panel (ZH19006C30) requires SPI mode 0; the
+     * driver default mode 2 (CPOL=1,CPHA=0) is never latched by the panel. */
+    if ((CONFIG_LV_DISP_SPI_CLK == 12) &&
+        (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "default.esp32c5") == 0)) {
+        return 0;
+    }
 #endif
     return SPI_TFT_SPI_MODE;
 }
