@@ -26,6 +26,13 @@ void joystick_init(joystick_t *joystick, int pin, uint32_t hold_lim,
   if (io_expander_initialized && pin >= 0 && pin <= 7) {
     return;
   }
+#ifdef CONFIG_BANSHEE_LITE_C5
+  // These values are TCA9535 port numbers, not MCU GPIOs. Never configure
+  // them as GPIOs when the expander is unavailable.
+  if (pin >= 0 && pin <= 7) {
+    return;
+  }
+#endif
 #endif
 
   gpio_config_t io_conf = {
@@ -110,6 +117,12 @@ bool joystick_get_button_state(joystick_t *joystick) {
     return false;
 #endif
   }
+#ifdef CONFIG_BANSHEE_LITE_C5
+  // A failed expander must not turn its port numbers into MCU GPIO reads.
+  if (joystick->pin >= 0 && joystick->pin <= 7) {
+    return false;
+  }
+#endif
 #endif
 
   // Fallback to GPIO mode

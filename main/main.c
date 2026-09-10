@@ -1055,7 +1055,11 @@ void app_main(void) {
         joystick_init(&joysticks[4], 1, HOLD_LIMIT, true);  // Down (P01)
 #endif
     } else {
+#ifdef CONFIG_BANSHEE_LITE_C5
+        printf("IO Expander initialization failed; C5 joystick input unavailable\n");
+#else
         printf("IO Expander initialization failed, falling back to GPIO mode\n");
+#endif
         // Fallback to GPIO mode - map to display manager expectations: [0]=Left, [1]=Select, [2]=Up, [3]=Right, [4]=Down
 #ifdef CONFIG_BANSHEE_LITE_C5
         joystick_init(&joysticks[0], CONFIG_L_BTN, HOLD_LIMIT, true);  // Left
