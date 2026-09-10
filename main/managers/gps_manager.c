@@ -792,7 +792,9 @@ void gps_manager_init(GPSManager *manager) {
         current_rx_pin = 4;
     } else if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0 &&
                custom_gps_pin == 0) {
+#if !defined(CONFIG_BANSHEE_LITE_S3)
         current_rx_pin = 17;
+#endif
     }
 #endif
  
@@ -837,6 +839,15 @@ void gps_manager_init(GPSManager *manager) {
             comm_tx = 9;
             comm_rx = 10;
         }
+#endif
+#if (defined(CONFIG_BANSHEE_LITE_C5) || defined(CONFIG_BANSHEE_LITE_S3)) && \
+    defined(CONFIG_GHOSTLINK_TX_PIN) && defined(CONFIG_GHOSTLINK_RX_PIN)
+#if CONFIG_GHOSTLINK_TX_PIN >= 0 && CONFIG_GHOSTLINK_RX_PIN >= 0
+        if (comm_tx == 6 && comm_rx == 7) {
+            comm_tx = CONFIG_GHOSTLINK_TX_PIN;
+            comm_rx = CONFIG_GHOSTLINK_RX_PIN;
+        }
+#endif
 #endif
         if (comm_tx == (int32_t)current_rx_pin || comm_rx == (int32_t)current_rx_pin) {
             ESP_LOGW(GPS_TAG,

@@ -89,6 +89,13 @@ bool joystick_get_button_state(joystick_t *joystick) {
       return io_manager_get_encoder_button();
     }
 
+#ifdef CONFIG_BANSHEE_LITE_C5
+    if (joystick->pin >= 0 && joystick->pin < 8) {
+      uint8_t raw_state = io_manager_get_raw_state();
+      return !(raw_state & (1U << joystick->pin));
+    }
+    return false;
+#else
     btn_event_t cached = {0};
     if (io_manager_get_cached_button_states(&cached) == ESP_OK) {
       switch (joystick->pin) {
@@ -101,6 +108,7 @@ bool joystick_get_button_state(joystick_t *joystick) {
       }
     }
     return false;
+#endif
   }
 #endif
 

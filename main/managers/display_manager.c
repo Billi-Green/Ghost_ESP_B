@@ -4560,7 +4560,9 @@ void hardware_input_task(void *pvParameters) {
                             SelectedMenuType = OT_GPS;
                             display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:compass") == 0) {
+#if !defined(CONFIG_BANSHEE_LITE_C5) || defined(CONFIG_HAS_COMPASS)
                             display_manager_switch_view(&compass_view);
+#endif
                         } else if (strcmp(cmd, "view:enviii") == 0) {
                             display_manager_switch_view(&enviii_view);
                         } else if (strcmp(cmd, "view:accel") == 0) {
@@ -4614,7 +4616,9 @@ void hardware_input_task(void *pvParameters) {
                             SelectedMenuType = OT_GPS;
                             display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:compass") == 0) {
+#if !defined(CONFIG_BANSHEE_LITE_C5) || defined(CONFIG_HAS_COMPASS)
                             display_manager_switch_view(&compass_view);
+#endif
                         } else if (strcmp(cmd, "view:enviii") == 0) {
                             display_manager_switch_view(&enviii_view);
                         } else if (strcmp(cmd, "view:accel") == 0) {
@@ -4668,7 +4672,9 @@ void hardware_input_task(void *pvParameters) {
                             SelectedMenuType = OT_GPS;
                             display_manager_switch_view(&options_menu_view);
                         } else if (strcmp(cmd, "view:compass") == 0) {
+#if !defined(CONFIG_BANSHEE_LITE_C5) || defined(CONFIG_HAS_COMPASS)
                             display_manager_switch_view(&compass_view);
+#endif
                         } else if (strcmp(cmd, "view:enviii") == 0) {
                             display_manager_switch_view(&enviii_view);
                         } else if (strcmp(cmd, "view:accel") == 0) {
