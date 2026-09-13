@@ -7523,6 +7523,21 @@ void option_event_cb(lv_event_t *e) {
         return;
     }
 
+    /* Virtual rows store their backing-list index in the LVGL object's user
+     * data.  A legacy/manual activation can therefore arrive here with a
+     * small integer instead of a label pointer.  Route it before any strcmp;
+     * treating an AP index such as 2 or 3 as a string causes a Load access
+     * fault at exactly that address. */
+    if (vlist_kind_for_state() != VLIST_NONE && options_view_is_virtual(g_options_view)) {
+        intptr_t row_index = (intptr_t)lv_event_get_user_data(e);
+        int count = options_view_virtual_count(g_options_view);
+        if (row_index >= 0 && row_index < count) {
+            vlist_activate((int)row_index, NULL);
+        }
+        option_invoked = false;
+        return;
+    }
+
     const char *Selected_Option = (const char *)lv_event_get_user_data(e);
 
     // Handle the "Back" option specifically (for encoder/joystick modes)
@@ -8702,13 +8717,6 @@ void option_event_cb(lv_event_t *e) {
         return;
     }
     
-    else if (vlist_kind_for_state() != VLIST_NONE && options_view_is_virtual(g_options_view)) {
-        /* Windowed result lists dispatch taps through options_view's activate
-         * callback, so there are no page rows or stable label strings here. */
-        option_invoked = false;
-        return;
-    }
-
     else if (current_wifi_menu_state == WIFI_MENU_STA_LIST) {
         if (strcmp(Selected_Option, "No items found") == 0) {
             option_invoked = false;

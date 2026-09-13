@@ -2306,17 +2306,20 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
    /* Keep the C5 display buffers in DMA-capable internal RAM. PSRAM draw
      buffers force the SPI driver to allocate internal bounce buffers at flush
      time, which is fragile once WiFi/LVGL have fragmented internal RAM.
-     Only somethingsomething gets a second buffer: LVGL renders the next
-     chunk while the SPI DMA flushes the previous one, hiding render time
-     behind the transfer. Other C5 boards stay single-buffered to save
-     internal RAM. */
+     Boards with enough internal RAM use two buffers so LVGL can render the
+     next chunk while DMA flushes the previous one. */
 #ifdef CONFIG_USE_C5_PARLIO_DISPLAY
   buf1_pixels = (size_t)width * 8;
 #else
   buf1_pixels = (size_t)width * 5;
 #endif
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-  if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
+  if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "NM-CYD-C5") == 0) {
+    /* Match the 10-line CYD buffer depth and double-buffer this SPI panel.
+       RGB565 usage is 2 * 240 * 10 * 2 = 9,600 bytes. */
+    buf1_pixels = (size_t)width * 10;
+    buf2_pixels = (size_t)width * 10;
+  } else if (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0) {
 #ifdef CONFIG_USE_C5_PARLIO_DISPLAY
     buf2_pixels = (size_t)width * 8;
 #else
@@ -2392,7 +2395,7 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
     buf2 = NULL;
     return;
   }
-  if (!buf2) {
+  if (buf2_pixels > 0 && !buf2) {
     ESP_LOGW(TAG, "display_manager: buf2 allocation failed, falling back to single buffer");
     buf2_pixels = 0;
   }

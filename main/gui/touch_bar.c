@@ -52,7 +52,12 @@ gui_touch_bar_t gui_touch_bar_create(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(bar, bg, 0);
     lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
     lv_obj_add_flag(bar, LV_OBJ_FLAG_IGNORE_LAYOUT);
-    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    /* Keep the bottom strip as a touch boundary.  Without CLICKABLE on the
+       bar itself, LVGL hit-testing falls through its background and activates
+       an option row underneath the bar.  Child buttons remain clickable and
+       receive their normal callbacks. */
+    lv_obj_clear_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(bar, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_move_foreground(bar);
 
     tb.bar = bar;
