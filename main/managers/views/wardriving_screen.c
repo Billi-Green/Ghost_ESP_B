@@ -124,8 +124,7 @@ static bool should_force_gps_deinit_on_exit(void) {
 
 static bool should_prefer_peer_only_in_view(void) {
 #ifdef CONFIG_BUILD_CONFIG_TEMPLATE
-    return (strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0 ||
-            strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething2") == 0);
+    return strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "somethingsomething") == 0;
 #else
     return false;
 #endif
@@ -315,7 +314,17 @@ static void update_display_cb(lv_timer_t *timer) {
         if (lbl_fix_icon) lv_label_set_text(lbl_fix_icon, LV_SYMBOL_CLOSE);
         if (lbl_fix_icon) lv_obj_set_style_text_color(lbl_fix_icon, lv_color_hex(error_color), 0);
         if (lbl_sats) lv_label_set_text(lbl_sats, "--/--");
-        if (lbl_aps) lv_label_set_text(lbl_aps, "0");
+        if (lbl_aps) {
+            uint32_t count = 0;
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(GHOSTESP_NO_NATIVE_BLE)
+            if (wardriving_ble_mode) {
+                count = ble_wardriving_get_unique_device_count();
+            }
+#endif
+            char count_buf[16];
+            snprintf(count_buf, sizeof(count_buf), "%u", (unsigned)count);
+            lv_label_set_text(lbl_aps, count_buf);
+        }
         if (lbl_speed) lv_label_set_text(lbl_speed, "---");
         if (lbl_heading) lv_label_set_text(lbl_heading, "--");
         if (lbl_coords) lv_label_set_text(lbl_coords, "---'N  ---'E");
@@ -776,9 +785,9 @@ void wardriving_view_create(void) {
         if (heap_caps_get_total_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) == 0) {
             glog("Dual wardriving requires a PSRAM device.\n");
         } else {
-            bool prefer_peer_only = peer_connected && should_prefer_peer_only_in_view();
-            gps_manager_set_peer_gps_preferred(prefer_peer_only);
-            if (prefer_peer_only) {
+            bool use_peer_gps = peer_connected && should_prefer_peer_only_in_view();
+            gps_manager_set_peer_gps_preferred(use_peer_gps);
+            if (use_peer_gps) {
                 gps_manager_clear_peer_fix();
                 if (g_gpsManager.isinitilized) {
                     gps_manager_deinit(&g_gpsManager);
@@ -787,7 +796,7 @@ void wardriving_view_create(void) {
             }
             ble_wardriving_reset_unique_device_count();
             csv_ok = (csv_file_open("wardriving") == ESP_OK);
-            if (csv_ok && !prefer_peer_only) {
+            if (csv_ok) {
                 ble_set_suspend_allowed(false);
                 if (!ble_start_scanning()) {
                     ble_set_suspend_allowed(true);
@@ -805,6 +814,10 @@ void wardriving_view_create(void) {
                         ble_set_suspend_allowed(true);
                         csv_ok = false;
                         glog("Failed to start wardriving observation queue.\n");
+                    } else {
+                        // Session setup resets GPS source selection.  Scanning
+                        // remains local while the paired S3 supplies GPS.
+                        gps_manager_set_peer_gps_preferred(use_peer_gps);
                     }
                 }
             } else if (!csv_ok) {
@@ -844,6 +857,11 @@ void wardriving_view_create(void) {
             glog("Wardrive helper unavailable: no GhostLink peer connected.\n");
         }
         if (!peer_helper_ok) wardriving_set_peer_assist(false);
+        if (peer_helper_ok && peer_connected && should_prefer_peer_only_in_view()) {
+            // start_wardriving() resets this; prefer the S3 GPS once its helper
+            // command has been accepted. Existing timeout handling falls back.
+            gps_manager_set_peer_gps_preferred(true);
+        }
     }
     wardriving_owns_csv_session = csv_ok && !observing_existing_session &&
                                     (wardriving_scan_mode || wardriving_ble_mode || wardriving_dual_mode);

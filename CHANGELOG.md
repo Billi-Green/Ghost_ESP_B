@@ -56,6 +56,7 @@ Untagged entries are by ([@jaylikesbunda](https://github.com/jaylikesbunda)). A 
 - Raised the Banshee GhostLink UART to 921600 baud and enlarged the UART receive buffer to 2048 bytes so the higher rate does not increase receive loss
 
 ### Fixed
+- Fixed Banshee GhostLink wardriving scans and S3 GPS fix selection
 - Fixed T-Embed rotary encoder step rate and sensitivity
 - Fixed encoder select in virtual scan-result lists
 - Fixed GhostScript crash when an event listener received an event

@@ -326,6 +326,9 @@ void handle_ble_wardriving(int argc, char **argv) {
             return;
         }
 
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(GHOSTESP_NO_NATIVE_BLE)
+        ble_wardriving_reset_unique_device_count();
+#endif
         ble_start_scanning();
         ble_register_handler(ble_wardriving_callback);
         printf("BLE wardriving started.\n");
