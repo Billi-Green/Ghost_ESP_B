@@ -130,6 +130,10 @@ static i2c_master_bus_handle_t s_touch_i2c_bus = NULL;
 #include "managers/fuel_gauge_manager.h"
 #endif
 
+#ifdef CONFIG_USE_IP5306_POWER_MANAGER
+#include "managers/ip5306_manager.h"
+#endif
+
 QueueHandle_tt input_queue = NULL;
 joystick_t joysticks[5];
 
@@ -3577,6 +3581,14 @@ void display_manager_init_deferred_peripherals(void) {
     ESP_LOGI(TAG, "Fuel gauge manager initialized successfully");
   } else {
     ESP_LOGW(TAG, "Failed to initialize fuel gauge manager");
+  }
+#endif
+
+#ifdef CONFIG_USE_IP5306_POWER_MANAGER
+  if (ip5306_manager_init()) {
+    ESP_LOGI(TAG, "IP5306 power manager initialized successfully");
+  } else {
+    ESP_LOGW(TAG, "Failed to initialize IP5306 power manager");
   }
 #endif
 

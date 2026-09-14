@@ -682,7 +682,35 @@ menu "Ghost ESP Options"
             depends on USE_MAX17048_FUEL_GAUGE
             help
                 GPIO pin for MAX17048 I2C SCL line.
-    
+
+        config USE_IP5306_POWER_MANAGER
+            bool "Use IP5306 Power Manager"
+            default n
+            depends on I2C_MANAGER_0_ENABLED
+            help
+                Enable IP5306 charger configuration and status support on the
+                shared I2C port 0. The IP5306 does not provide voltage/current
+                measurements, so this does not replace a fuel gauge.
+
+        config IP5306_I2C_ADDRESS
+            hex "IP5306 I2C Address"
+            default 0x75
+            depends on USE_IP5306_POWER_MANAGER
+            help
+                Seven-bit I2C address for the IP5306. The datasheet's 0xEA
+                address is the eight-bit write address; ESP-IDF uses 0x75.
+
+        config IP5306_CHARGE_CURRENT_CODE
+            hex "IP5306 VIN Charge Current Code"
+            default 0x02
+            range 0x00 0x1F
+            depends on USE_IP5306_POWER_MANAGER
+            help
+                Raw CHG_DIG_CTL0[4:0] code. The IP5306 has no exact 400 mA
+                setting: 0x02 is 250 mA and is the highest setting below the
+                requested 400 mA maximum; 0x04 is the next setting (450 mA
+                nominal per the datasheet equation).
+
         config HAS_RTC_CLOCK
             bool "Enable RTC Clock"
             default n
@@ -1460,6 +1488,7 @@ menu "Ghost ESP Options"
     
     config HAS_GPS
         bool "Enable GPS"
+        depends on !BANSHEE_LITE_C5
         default n
         help
             Enable GPS support.
