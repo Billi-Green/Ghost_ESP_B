@@ -29,6 +29,7 @@
 #include "freertos/task.h"
 #include "managers/status_display_manager.h"
 #include "managers/display_manager.h"
+#include "managers/xiao_sense_manager.h"
 #include "gui/toast.h"
 #include "lvgl_tft/disp_spi.h"
 #if defined(CONFIG_LV_TOUCH_DRIVER_PROTOCOL_SPI) && !defined(CONFIG_USE_BIT_BANG_TOUCH)
@@ -49,6 +50,7 @@ static bool s_sd_log_levels_tuned = false;
 static SemaphoreHandle_t s_sd_jit_mutex = NULL;
 static uint32_t s_sd_jit_mount_depth = 0;
 static bool s_sd_jit_display_suspended = false;
+static bool s_xiao_sd_config_loaded = false;
 
 // Track SPI bus ownership locally so cleanup only frees a bus SD initialized
 // itself, while still clearing reused-host bookkeeping on unmount/failure.
@@ -678,6 +680,20 @@ esp_err_t sd_card_init(void) {
     return ESP_ERR_INVALID_STATE;
   }
 
+  /* The XIAO Sense shares GPIO7 between the user LED and SD SPI clock. Keep
+   * explicit init calls JIT as well, rather than leaving the LED detached from
+   * a permanently mounted card. */
+  if (xiao_sense_manager_is_supported()) {
+    bool was_mounted = sd_card_manager.is_initialized;
+    bool display_was_suspended = false;
+    ret = sd_card_mount_for_flush(&display_was_suspended);
+    if (ret == ESP_OK && !was_mounted) {
+      ret = sd_card_setup_directory_structure();
+      sd_card_unmount_after_flush(display_was_suspended);
+    }
+    return ret;
+  }
+
   /* Clean up stale tracked SPI state before a fresh init attempt. */
   if (s_spi_host_id >= 0) {
     sd_spi_bus_release_if_tracked();
@@ -1249,6 +1265,17 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
   }
 
 #if defined(CONFIG_USING_SPI)
+  if (xiao_sense_manager_is_supported() && !s_xiao_sd_config_loaded) {
+    (void)sd_card_load_config();
+    s_xiao_sd_config_loaded = true;
+  }
+
+  bool xiao_sense_sd_claimed = false;
+  if (xiao_sense_manager_is_supported()) {
+    xiao_sense_manager_sd_mount_begin();
+    xiao_sense_sd_claimed = true;
+  }
+
   /* Only time-multiplex display SPI when the active display really shares the
    * SD bus. A PARLIO display leaves SPI2 available for a permanent SD mount. */
   if (sd_card_uses_shared_display_spi()) {
@@ -1266,6 +1293,8 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
     .mosi_io_num = sd_card_manager.spi_mosi_pin,
     .miso_io_num = sd_card_manager.spi_miso_pin,
     .sclk_io_num = sd_card_manager.spi_clk_pin,
+    .quadwp_io_num = -1,
+    .quadhd_io_num = -1,
     .max_transfer_sz = 2048,  /* see rationale in sd_card_init's bus_config above */
   };
 
@@ -1283,6 +1312,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
     esp_err_t bus_ret = spi_bus_initialize(host_id, &bus_config, dmabus);
     if (bus_ret != ESP_OK && bus_ret != ESP_ERR_INVALID_STATE) {
       if (display_was_suspended && *display_was_suspended) display_spi_resume_after_sd();
+      if (xiao_sense_sd_claimed) xiao_sense_manager_sd_mount_end();
       xSemaphoreGiveRecursive(jit_mutex);
       return bus_ret;
     }
@@ -1308,6 +1338,7 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
       sd_spi_bus_release_if_tracked();
     }
     if (display_was_suspended && *display_was_suspended) display_spi_resume_after_sd();
+    if (xiao_sense_sd_claimed) xiao_sense_manager_sd_mount_end();
     xSemaphoreGiveRecursive(jit_mutex);
     return ret;
   }
@@ -1323,6 +1354,9 @@ esp_err_t sd_card_mount_for_flush(bool *display_was_suspended) {
 #else
   // For SDMMC, if not mounted try normal init path quickly
   xSemaphoreGiveRecursive(jit_mutex);
+  if (xiao_sense_manager_is_supported()) {
+    return ESP_ERR_NOT_SUPPORTED;
+  }
   return sd_card_init();
 #endif
 }
@@ -1361,6 +1395,9 @@ void sd_card_unmount_after_flush(bool display_was_suspended) {
 }
 
 bool sd_card_needs_jit_mount(void) {
+    if (xiao_sense_manager_is_supported()) {
+        return true;
+    }
 #if defined(CONFIG_USE_C5_PARLIO_DISPLAY)
     return false;
 #endif
@@ -1443,6 +1480,7 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
         status_display_show_status("Virtual SD Off");
         break;
     }
+    xiao_sense_manager_sd_mount_end();
     return;
   }
 #endif
@@ -1528,6 +1566,7 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     status_display_show_status("SD Not Mounted");
   }
 #endif
+  xiao_sense_manager_sd_mount_end();
 }
 
 void sd_card_unmount(void) {
