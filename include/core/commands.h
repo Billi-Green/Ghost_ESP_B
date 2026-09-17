@@ -299,6 +299,12 @@ void handle_nrf24_cmd(int argc, char **argv);
 // LoRa (SX1262/SX1276/LLCC68, Meshtastic-lite target)
 void handle_lora_cmd(int argc, char **argv);
 
+// MeshCore (SX1262-family, MeshCore-compatible companion node)
+void handle_meshcore_cmd(int argc, char **argv);
+
+// Unified mesh layer: switch between Meshtastic/MeshCore and shared verbs
+void handle_mesh_cmd(int argc, char **argv);
+
 // Printer command
 void handle_printer_command(int argc, char **argv);
 

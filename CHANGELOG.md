@@ -9,6 +9,8 @@ Untagged entries are by ([@jaylikesbunda](https://github.com/jaylikesbunda)). A 
 - Added a clock to the centre of the status bar, toggleable in Settings > Date & Time 
 - Added switchable analog and seven-segment clock faces to the Clock view
 - Added Meshtastic-compatible LoRa support for SX1262-family radios including BLE app support with the official Meshtastic App
+- Added MeshCore companion support for SX1262-family radios (enable `HAS_MESHCORE`): on-air adverts, contacts, 8 group channels, group and direct text with ACK/returned-path, an Ed25519 identity, and a `meshcore` CLI. Meshtastic and MeshCore share one radio and are mutually exclusive at runtime.
+- Added a MeshCore BLE companion link (Nordic-UART GATT service) so the official MeshCore apps can chat, manage contacts and channels, and configure the radio.
 - Added LoRa support to:
   - Heltec V3
   - Elecrow CrowPanel Advance 2.4-inch

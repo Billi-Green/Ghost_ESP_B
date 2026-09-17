@@ -552,6 +552,10 @@ void register_commands() {
 #endif
     register_command("nrf24", handle_nrf24_cmd);
     register_command("lora", handle_lora_cmd);
+    register_command("meshtastic", handle_lora_cmd);
+    register_command("meshcore", handle_meshcore_cmd);
+    register_command("mc", handle_meshcore_cmd);
+    register_command("mesh", handle_mesh_cmd);
     register_command("audio", handle_audio_cmd);
     register_command("badusb", handle_badusb_cmd);
 #ifdef CONFIG_HAS_USB_MSC_SD
