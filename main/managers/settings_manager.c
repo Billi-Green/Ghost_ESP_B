@@ -17,10 +17,20 @@
 #define S_TAG "SETTINGS"
 
 static bool settings_should_use_noop_dualcomm_pins(void) {
-#if defined(CONFIG_CROWPANEL_ADVANCE_S3_LCD)
+#if defined(CONFIG_CROWPANEL_ADVANCED_P4) && defined(CONFIG_HAS_LORA)
+  // CrowPanel P4 wireless-module mode: the GhostLink UART defaults (TX GPIO6 /
+  // RX GPIO7) are the SX1262 SPI MOSI/MISO. Park them instead of fighting the
+  // radio; this board's expansion UART is on GPIO47/48 (J2).
+  return true;
+#elif defined(CONFIG_CROWPANEL_ADVANCE_S3_LCD)
   // Standalone SD profile: the generic UART pins overlap SD MOSI and RGB R0.
   // Override saved defaults too, so existing installations need no NVS erase.
   return true;
+#elif defined(CONFIG_HAS_LORA) && defined(CONFIG_BUILD_CONFIG_TEMPLATE)
+  // Heltec V3 + LoRa: GhostLink UART RX (GPIO7) is the LoRa NSS pin in
+  // hardware. A single headless board has no GhostLink peer anyway, so park
+  // both pins rather than fight the radio (and break old saved 6/7 too).
+  return strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "Heltec WiFi Kit 32 V3") == 0;
 #elif defined(CONFIG_BUILD_CONFIG_TEMPLATE)
   return strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "Pancake") == 0 ||
          strcmp(CONFIG_BUILD_CONFIG_TEMPLATE, "MarauderV8") == 0;
@@ -53,6 +63,8 @@ static const char *NVS_BOARD_TYPE_KEY = "board_type";
 static const char *NVS_CUSTOM_PIN_CONFIG_KEY = "custom_pin_config";
 static const char *NVS_FLAPPY_GHOST_NAME = "flap_name";
 static const char *NVS_TIMEZONE_NAME = "sel_tz";
+static const char *NVS_CLOCK_STYLE_KEY = "clock_style";
+static const char *NVS_STATUS_BAR_CLOCK_KEY = "statusbar_clk";
 static const char *NVS_ACCENT_COLOR = "sel_ac";
 static const char *NVS_GPS_RX_PIN = "gps_rx_pin";
 static const char *NVS_GPS_BAUD_KEY = "gps_baud";
@@ -91,6 +103,7 @@ static const char *NVS_CAROUSEL_INVERT_KEY = "carr_inv";
 static const char *NVS_NEOPIXEL_MAX_BRIGHTNESS_KEY = "neopixel_bright";
 static const char *NVS_RGB_LED_COUNT_KEY = "rgb_led_cnt";
 static const char *NVS_ENCODER_INVERT_KEY = "enc_inv";
+static const char *NVS_ENCODER_LATCH_KEY = "enc_latch";
 static const char *NVS_AUTO_SAVE_SCANS_KEY = "auto_save_sc";
 static const char *NVS_SETUP_COMPLETE_KEY = "setup_done";
 static const char *NVS_WIFI_COUNTRY_KEY = "wifi_country";
@@ -131,6 +144,7 @@ static const char *NVS_THEME_BG_EFFECTS_KEY = "theme_bg_fx";
 static const char *NVS_MENU_ROUNDED_KEY = "menu_rounded";
 static const char *NVS_EPILEPSY_WARNING_KEY = "epil_warn";
 static const char *NVS_FONT_SIZE_KEY = "font_size";
+static const char *NVS_ROW_HEIGHT_KEY = "row_height";
 static const char *NVS_REDUCED_MOTION_KEY = "reduce_motion";
 static const char *NVS_INPUT_REPEAT_SPEED_KEY = "repeat_spd";
 static const char *NVS_HIGH_CONTRAST_KEY = "high_contrast";
@@ -224,6 +238,8 @@ void settings_set_defaults(FSettings *settings) {
   strcpy(settings->flappy_ghost_name, "Bob");
   strcpy(settings->selected_hex_accent_color, "#ffffff");
   strcpy(settings->selected_timezone, "MST7MDT,M3.2.0,M11.1.0");
+  settings->clock_style = 0;      // Digital
+  settings->status_bar_clock = true;
   settings->gps_rx_pin = 0;
   settings->gps_baud_rate = 0; // 0 = use CONFIG_GPS_UART_BAUD_RATE
   settings->display_timeout_ms = 30000; // Default to 30 seconds
@@ -236,8 +252,8 @@ void settings_set_defaults(FSettings *settings) {
   settings->rgb_green_pin = -1;
   settings->rgb_blue_pin = -1;
   settings->third_control_enabled = false;
-  settings->terminal_text_color = 0x00FF00;
-  settings->terminal_font_size = 1; // Normal (0=Small, 1=Normal, 2=Large)
+  settings->terminal_text_color = 0xFFFFFF; // White
+  settings->terminal_font_size = 0; // Small (0=Small, 1=Normal, 2=Large)
   settings->invert_colors = false;
 #ifdef CONFIG_BANSHEE_LITE_C5
   settings->auto_flip_enabled = false;
@@ -269,6 +285,9 @@ void settings_set_defaults(FSettings *settings) {
   settings->carousel_invert_direction = false; // Default to non-inverted carousel slide direction
   settings->neopixel_max_brightness = 100; // Default to 100% brightness
   settings->encoder_invert_direction = false;
+#ifdef CONFIG_USE_ENCODER
+  settings->encoder_legacy_latch = false;
+#endif
   settings->rgb_led_count = CONFIG_NUM_LEDS;
   settings->auto_save_scans = true;
   settings->setup_complete = false;
@@ -298,6 +317,7 @@ void settings_set_defaults(FSettings *settings) {
 #ifdef CONFIG_IS_ATOMS3R
   settings->font_size = 0; // Small is the default on the AtomS3R display
 #endif
+  settings->row_height = 1; // Normal options-list row size
   settings->reduced_motion = false;
   settings->input_repeat_speed = 1; // Normal (0=Slow, 1=Normal, 2=Fast)
   settings->high_contrast = false;
@@ -485,6 +505,18 @@ void settings_load(FSettings *settings) {
                     &str_size);
   if (err != ESP_OK) {
     printf("Failed to load Timezone String\n");
+  }
+
+  uint8_t clock_style_u8 = 0;
+  err = nvs_get_u8(nvsHandle, NVS_CLOCK_STYLE_KEY, &clock_style_u8);
+  if (err == ESP_OK) {
+    settings->clock_style = clock_style_u8;
+  }
+
+  uint8_t status_bar_clock_u8 = 1;
+  err = nvs_get_u8(nvsHandle, NVS_STATUS_BAR_CLOCK_KEY, &status_bar_clock_u8);
+  if (err == ESP_OK) {
+    settings->status_bar_clock = (bool)status_bar_clock_u8;
   }
 
   str_size = sizeof(settings->selected_hex_accent_color);
@@ -816,6 +848,14 @@ void settings_load(FSettings *settings) {
   } else {
     settings->encoder_invert_direction = false;
   }
+#ifdef CONFIG_USE_ENCODER
+  err = nvs_get_u8(nvsHandle, NVS_ENCODER_LATCH_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->encoder_legacy_latch = (bool)value_u8;
+  } else {
+    settings->encoder_legacy_latch = false;
+  }
+#endif
 
   err = nvs_get_u8(nvsHandle, NVS_SETUP_COMPLETE_KEY, &value_u8);
   if (err == ESP_OK) {
@@ -935,6 +975,10 @@ void settings_load(FSettings *settings) {
   err = nvs_get_u8(nvsHandle, NVS_FONT_SIZE_KEY, &value_u8);
   if (err == ESP_OK) {
     settings->font_size = value_u8;
+  }
+  err = nvs_get_u8(nvsHandle, NVS_ROW_HEIGHT_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->row_height = value_u8;
   }
   err = nvs_get_u8(nvsHandle, NVS_REDUCED_MOTION_KEY, &value_u8);
   if (err == ESP_OK) {
@@ -1295,6 +1339,10 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_u8(nvsHandle, NVS_ENCODER_INVERT_KEY, G_Settings.encoder_invert_direction);
             key = NVS_ENCODER_INVERT_KEY;
             break;
+        case SETTING_ENCODER_LATCH:
+            err = nvs_set_u8(nvsHandle, NVS_ENCODER_LATCH_KEY, G_Settings.encoder_legacy_latch);
+            key = NVS_ENCODER_LATCH_KEY;
+            break;
 #endif
 #if CONFIG_IDF_TARGET_ESP32S3
         case SETTING_USB_HOST_MODE:
@@ -1302,6 +1350,7 @@ void settings_persist_setting(SettingsType setting) {
 #endif
         case SETTING_RUN_SETUP_WIZARD:
         case SETTING_I2C_SCAN:
+        case SETTING_GL_BENCH:
         case SETTING_WIGLE_TEST_API:
         case SETTING_WIGLE_HELP:
         case SETTING_WIGLE_MANUAL_UPLOAD:
@@ -1417,6 +1466,10 @@ void settings_persist_setting(SettingsType setting) {
         case SETTING_FONT_SIZE:
             err = nvs_set_u8(nvsHandle, NVS_FONT_SIZE_KEY, G_Settings.font_size);
             key = NVS_FONT_SIZE_KEY;
+            break;
+        case SETTING_ROW_HEIGHT:
+            err = nvs_set_u8(nvsHandle, NVS_ROW_HEIGHT_KEY, G_Settings.row_height);
+            key = NVS_ROW_HEIGHT_KEY;
             break;
         case SETTING_REDUCED_MOTION:
             err = nvs_set_u8(nvsHandle, NVS_REDUCED_MOTION_KEY, G_Settings.reduced_motion ? 1 : 0);
@@ -1536,6 +1589,14 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_str(nvsHandle, NVS_TIMEZONE_NAME, G_Settings.selected_timezone);
             key = NVS_TIMEZONE_NAME;
             break;
+        case SETTING_CLOCK_STYLE:
+            err = nvs_set_u8(nvsHandle, NVS_CLOCK_STYLE_KEY, G_Settings.clock_style);
+            key = NVS_CLOCK_STYLE_KEY;
+            break;
+        case SETTING_STATUS_BAR_CLOCK:
+            err = nvs_set_u8(nvsHandle, NVS_STATUS_BAR_CLOCK_KEY, G_Settings.status_bar_clock ? 1 : 0);
+            key = NVS_STATUS_BAR_CLOCK_KEY;
+            break;
         default:
             ESP_LOGW(TAG, "Unknown setting type to persist: %d", setting);
             return;
@@ -1625,6 +1686,27 @@ const char *settings_get_timezone_str(const FSettings *settings) {
   return settings->selected_timezone;
 }
 
+void settings_set_clock_style(FSettings *settings, uint8_t style) {
+  if (settings) {
+    /* 0 = Digital, 1 = Analog, 2 = Segment */
+    settings->clock_style = (style > 2) ? 2 : style;
+  }
+}
+
+uint8_t settings_get_clock_style(const FSettings *settings) {
+  return settings ? settings->clock_style : 0;
+}
+
+void settings_set_status_bar_clock(FSettings *settings, bool enabled) {
+  if (settings) {
+    settings->status_bar_clock = enabled;
+  }
+}
+
+bool settings_get_status_bar_clock(const FSettings *settings) {
+  return settings ? settings->status_bar_clock : true;
+}
+
 void settings_set_accent_color_str(FSettings *settings, const char *Name) {
   strncpy(settings->selected_hex_accent_color, Name,
           sizeof(settings->selected_hex_accent_color) - 1);
@@ -1706,6 +1788,8 @@ esp_err_t settings_save(const FSettings *settings) {
     NVS_SET(nvs_set_u8(nvsHandle, NVS_MENU_LAYOUT_KEY, (uint8_t)settings->menu_layout));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_CAROUSEL_INVERT_KEY, settings->carousel_invert_direction ? 1 : 0));
     NVS_SET(nvs_set_str(nvsHandle, NVS_TIMEZONE_NAME, settings->selected_timezone));
+    NVS_SET(nvs_set_u8(nvsHandle, NVS_CLOCK_STYLE_KEY, settings->clock_style));
+    NVS_SET(nvs_set_u8(nvsHandle, NVS_STATUS_BAR_CLOCK_KEY, settings->status_bar_clock ? 1 : 0));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_WIFI_COUNTRY_KEY, settings->wifi_country));
     NVS_SET(nvs_set_str(nvsHandle, NVS_WIGLE_API_KEY, settings->wigle_api_key));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_WIGLE_DONATE_KEY, settings->wigle_donate ? 1 : 0));
@@ -1746,6 +1830,7 @@ esp_err_t settings_save(const FSettings *settings) {
     NVS_SET(nvs_set_u8(nvsHandle, NVS_MENU_ROUNDED_KEY, settings->menu_rounded ? 1 : 0));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_EPILEPSY_WARNING_KEY, settings->epilepsy_warning_enabled ? 1 : 0));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_FONT_SIZE_KEY, settings->font_size));
+    NVS_SET(nvs_set_u8(nvsHandle, NVS_ROW_HEIGHT_KEY, settings->row_height));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_REDUCED_MOTION_KEY, settings->reduced_motion ? 1 : 0));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_INPUT_REPEAT_SPEED_KEY, settings->input_repeat_speed));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_HIGH_CONTRAST_KEY, settings->high_contrast ? 1 : 0));
@@ -2030,7 +2115,7 @@ void settings_set_terminal_font_size(FSettings *settings, uint8_t size) {
 }
 
 uint8_t settings_get_terminal_font_size(const FSettings *settings) {
-  return settings ? settings->terminal_font_size : 1;
+  return settings ? settings->terminal_font_size : 0;
 }
 
 void settings_set_invert_colors(FSettings *settings, bool enabled) {
@@ -2311,6 +2396,16 @@ bool settings_get_encoder_invert_direction(const FSettings *settings) {
   return settings->encoder_invert_direction;
 }
 
+#ifdef CONFIG_USE_ENCODER
+void settings_set_encoder_legacy_latch(FSettings *settings, bool enabled) {
+  settings->encoder_legacy_latch = enabled;
+}
+
+bool settings_get_encoder_legacy_latch(const FSettings *settings) {
+  return settings->encoder_legacy_latch;
+}
+#endif
+
 void settings_set_setup_complete(FSettings *settings, bool complete) {
   settings->setup_complete = complete;
 }
@@ -2575,6 +2670,17 @@ void settings_set_menu_rounded(FSettings *settings, bool enabled) {
 
 bool settings_get_menu_rounded(const FSettings *settings) {
   return settings ? settings->menu_rounded : false;
+}
+
+void settings_set_row_height(FSettings *settings, uint8_t height) {
+  if (settings) {
+    settings->row_height = height < MENU_ROW_HEIGHT_OPTION_COUNT ? height : 1;
+  }
+}
+
+uint8_t settings_get_row_height(const FSettings *settings) {
+  if (!settings) return 1;
+  return settings->row_height < MENU_ROW_HEIGHT_OPTION_COUNT ? settings->row_height : 1;
 }
 
 void settings_set_epilepsy_warning_enabled(FSettings *settings, bool enabled) {

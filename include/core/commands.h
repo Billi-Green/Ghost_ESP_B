@@ -54,6 +54,8 @@ void handle_timezone_cmd(int argc, char **argv);
 void handle_loadconfig_cmd(int argc, char **argv);
 void handle_web_auth_cmd(int argc, char **argv);
 void handle_webuiap_cmd(int argc, char **argv);
+void handle_clockstyle_cmd(int argc, char **argv);
+void handle_statusbarclock_cmd(int argc, char **argv);
 
 // BadUSB and USB keyboard host
 void handle_badusb_cmd(int argc, char **argv);
@@ -73,6 +75,7 @@ void handle_script_cmd(int argc, char **argv);
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(GHOSTESP_NO_NATIVE_BLE)
 // BLE, AirTag, Flipper, GATT, Chameleon, and BLE spam
 void handle_ble_scan_cmd(int argc, char **argv);
+void handle_ble_detect_cmd(int argc, char **argv);
 void handle_ble_wardriving(int argc, char **argv);
 #if !defined(CONFIG_IDF_TARGET_ESP32P4)
 void handle_dualwd(int argc, char **argv);
@@ -104,6 +107,7 @@ void handle_snmp_probe(int argc, char **argv);
 void handle_enum_scan(int argc, char **argv);
 void handle_congestion_cmd(int argc, char **argv);
 void handle_listen_probes_cmd(int argc, char **argv);
+void handle_mdns_sniff(int argc, char **argv);
 void handle_dhcpstarve_cmd(int argc, char **argv);
 
 // Scan cancellation helpers (used by stop-all handler)
@@ -249,6 +253,7 @@ void handle_comm_send(int argc, char **argv);
 void handle_comm_status(int argc, char **argv);
 void handle_comm_disconnect(int argc, char **argv);
 void handle_comm_setpins(int argc, char **argv);
+void handle_glbench_cmd(int argc, char **argv);
 void cmd_comm_register_callback(void);
 
 // GhostLink peer-flashing commands (see managers/peer_ota_manager.c)
@@ -290,6 +295,9 @@ void handle_subghz_cmd(int argc, char **argv);
 
 // NRF24 analyzer
 void handle_nrf24_cmd(int argc, char **argv);
+
+// LoRa (SX1262/SX1276/LLCC68, Meshtastic-lite target)
+void handle_lora_cmd(int argc, char **argv);
 
 // Printer command
 void handle_printer_command(int argc, char **argv);

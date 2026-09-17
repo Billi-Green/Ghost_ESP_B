@@ -86,6 +86,7 @@ static const SettingDescriptor k_settings_desc[] = {
     {"terminal_font_size", ST_U8, OFF(terminal_font_size), "Display", 0, 0, 2},
     {"menu_theme", ST_U8, OFF(menu_theme), "Display", 0, 0, THEME_PALETTE_THEME_COUNT - 1},
     {"font_size", ST_U8, OFF(font_size), "Display", 0, 0, 2},
+    {"row_height", ST_U8, OFF(row_height), "Display", 0, 0, MENU_ROW_HEIGHT_OPTION_COUNT - 1},
     {"reduce_motion", ST_BOOL, OFF(reduced_motion), "Display", 0, 0, 0},
     {"repeat_speed", ST_U8, OFF(input_repeat_speed), "Display", 0, 0, 2},
     {"high_contrast", ST_BOOL, OFF(high_contrast), "Display", 0, 0, 0},
@@ -112,6 +113,8 @@ static const SettingDescriptor k_settings_desc[] = {
 
     {"flappy_name", ST_STRING, OFF(flappy_ghost_name), "Personalisation", 65, 0, 0},
     {"timezone", ST_STRING, OFF(selected_timezone), "Date & Time", 25, 0, 0},
+    {"clock_style", ST_U8, OFF(clock_style), "Date & Time", 0, 0, 2},
+    {"status_bar_clock", ST_BOOL, OFF(status_bar_clock), "Date & Time", 0, 0, 0},
     {"accent_color", ST_STRING, OFF(selected_hex_accent_color), "Personalisation", 25, 0, 0},
     {"io_btn_p10_cmd", ST_STRING, OFF(io_btn_p10_cmd), "IO Button", 129, 0, 0},
     {"io_btn_p11_cmd", ST_STRING, OFF(io_btn_p11_cmd), "IO Button", 129, 0, 0},
@@ -464,6 +467,78 @@ void handle_webuiap_cmd(int argc, char **argv) {
     glog("Usage: webuiap [on|off|toggle|status]\n");
 }
 
+// clockstyle - Switch the Clock view between digital, analog and segment faces
+void handle_clockstyle_cmd(int argc, char **argv) {
+    static const char *const names[] = {"Digital", "Analog", "Segment"};
+    uint8_t style = settings_get_clock_style(&G_Settings);
+    if (style > 2) style = 0;
+
+    if (argc == 1) {
+        style = (uint8_t)((style + 1) % 3);
+    } else if (argc == 2) {
+        if (strcmp(argv[1], "digital") == 0) {
+            style = 0;
+        } else if (strcmp(argv[1], "analog") == 0) {
+            style = 1;
+        } else if (strcmp(argv[1], "segment") == 0) {
+            style = 2;
+        } else if (strcmp(argv[1], "toggle") == 0) {
+            style = (uint8_t)((style + 1) % 3);
+        } else if (strcmp(argv[1], "status") == 0) {
+            glog("Clock style is %s.\n", names[style]);
+            return;
+        } else {
+            glog("Usage: clockstyle [digital|analog|segment|toggle|status]\n");
+            return;
+        }
+    } else {
+        glog("Usage: clockstyle [digital|analog|segment|toggle|status]\n");
+        return;
+    }
+
+    settings_set_clock_style(&G_Settings, style);
+    settings_persist_setting(SETTING_CLOCK_STYLE);
+    glog("Clock style set to %s.\n", names[style]);
+    status_display_show_status(style == 2 ? "Clock: Segment"
+                                          : (style == 1 ? "Clock: Analog" : "Clock: Digital"));
+}
+
+// statusbarclock - Show/hide the clock in the status bar centre
+void handle_statusbarclock_cmd(int argc, char **argv) {
+    bool enabled = settings_get_status_bar_clock(&G_Settings);
+
+    if (argc == 1) {
+        enabled = !enabled;
+        settings_set_status_bar_clock(&G_Settings, enabled);
+        settings_persist_setting(SETTING_STATUS_BAR_CLOCK);
+        glog("Status bar clock %s.\n", enabled ? "enabled" : "disabled");
+        return;
+    }
+
+    if (argc == 2) {
+        if (strcmp(argv[1], "on") == 0) {
+            enabled = true;
+        } else if (strcmp(argv[1], "off") == 0) {
+            enabled = false;
+        } else if (strcmp(argv[1], "toggle") == 0) {
+            enabled = !enabled;
+        } else if (strcmp(argv[1], "status") == 0) {
+            glog("Status bar clock is %s.\n", enabled ? "enabled" : "disabled");
+            return;
+        } else {
+            glog("Usage: statusbarclock [on|off|toggle|status]\n");
+            return;
+        }
+
+        settings_set_status_bar_clock(&G_Settings, enabled);
+        settings_persist_setting(SETTING_STATUS_BAR_CLOCK);
+        glog("Status bar clock %s.\n", enabled ? "enabled" : "disabled");
+        return;
+    }
+
+    glog("Usage: statusbarclock [on|off|toggle|status]\n");
+}
+
 // Settings command handler
 void handle_settings_cmd(int argc, char **argv) {
     if (argc < 2) {
@@ -527,6 +602,7 @@ void handle_settings_cmd(int argc, char **argv) {
         glog("    terminal_font_size - Terminal font size (0=Small,1=Normal,2=Large)\n");
         glog("    menu_theme        - Menu theme palette index\n");
         glog("    font_size         - Global font size (0=Small,1=Normal,2=Large)\n");
+        glog("    row_height        - Options row height (0=Compact,1=Normal,2=Large,3=Extra Large)\n");
         glog("    reduce_motion     - Reduce animations (true/false)\n");
         glog("    repeat_speed      - Input repeat speed (0-2)\n");
         glog("    high_contrast     - High contrast mode (true/false)\n");
@@ -550,6 +626,8 @@ void handle_settings_cmd(int argc, char **argv) {
         glog("    auto_save_scans   - Auto save scan results to SD (true/false)\n");
         glog("  Date & Time Settings:\n");
         glog("    timezone          - Selected timezone\n");
+        glog("    clock_style       - Clock face (0=Digital, 1=Analog, 2=Segment)\n");
+        glog("    status_bar_clock  - Show clock in status bar centre (true/false)\n");
         glog("  Personalisation Settings:\n");
         glog("    flappy_name       - Flappy Ghost name\n");
         glog("    accent_color      - Accent color (hex)\n");

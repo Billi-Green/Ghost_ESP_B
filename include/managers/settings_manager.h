@@ -103,6 +103,7 @@ typedef enum {
 #endif
 #ifdef CONFIG_USE_ENCODER
     SETTING_ENCODER_INVERT,
+    SETTING_ENCODER_LATCH,
 #endif
 #if CONFIG_IDF_TARGET_ESP32S3
     SETTING_USB_HOST_MODE,
@@ -112,6 +113,7 @@ typedef enum {
 #endif
     SETTING_RUN_SETUP_WIZARD,
     SETTING_I2C_SCAN,
+    SETTING_GL_BENCH,
     SETTING_FACTORY_RESET,
     SETTING_SETUP_COMPLETE,
     SETTING_WIGLE_API_KEY,
@@ -143,6 +145,7 @@ typedef enum {
     SETTING_MENU_ROUNDED,
     SETTING_EPILEPSY_WARNING,
     SETTING_FONT_SIZE,
+    SETTING_ROW_HEIGHT,
     SETTING_REDUCED_MOTION,
     SETTING_INPUT_REPEAT_SPEED,
     SETTING_HIGH_CONTRAST,
@@ -173,6 +176,9 @@ typedef enum {
     SETTING_WIFI_AUTO_RECONNECT,
     // Timezone quick-edit
     SETTING_TIMEZONE,
+    // Clock display
+    SETTING_CLOCK_STYLE,
+    SETTING_STATUS_BAR_CLOCK,
     // OTA firmware update
     SETTING_OTA_CHANNEL,
     SETTING_OTA_UPDATE_AVAILABLE,
@@ -208,6 +214,9 @@ typedef enum {
  * 8-slot layouts are migrated on load (see settings_manager.c). */
 #define FAVORITES_MAX 16
 #define FAVORITE_NAME_LEN 64
+
+/* Number of presets offered by the options-list Row Height setting. */
+#define MENU_ROW_HEIGHT_OPTION_COUNT 4
 
 #define GPS_BAUD_AUTO 1U
 
@@ -272,6 +281,8 @@ typedef struct {
   PrinterAlignment printer_alignment; // Text alignment
   char flappy_ghost_name[65];
   char selected_timezone[25];
+  uint8_t clock_style;   // Clock view face: 0 = Digital, 1 = Analog
+  bool status_bar_clock; // Show the clock in the status bar centre
   char selected_hex_accent_color[25];
   int gps_rx_pin;
   uint32_t gps_baud_rate;      // 0 = use Kconfig default (CONFIG_GPS_UART_BAUD_RATE)
@@ -323,6 +334,9 @@ typedef struct {
   uint32_t status_idle_timeout_ms; // delay before starting idle animation
 #endif
   bool encoder_invert_direction;
+#ifdef CONFIG_USE_ENCODER
+  bool encoder_legacy_latch;
+#endif
   bool setup_complete;
   bool auto_save_scans;
   uint8_t wifi_country;
@@ -361,6 +375,7 @@ typedef struct {
     bool menu_rounded;              // Rounded corners on menu items
     bool epilepsy_warning_enabled;  // Show warning before flashing LED effects
     uint8_t font_size;              // 0=Small, 1=Normal, 2=Large
+    uint8_t row_height;             // Options-list row size preset (0=Compact, 1=Normal, 2=Large, 3=Extra large)
     bool reduced_motion;            // Disable animations
     uint8_t input_repeat_speed;     // 0=Slow, 1=Normal, 2=Fast
     bool high_contrast;             // High contrast color overrides
@@ -423,6 +438,11 @@ bool settings_get_rts_enabled(const FSettings *settings);
 
 void settings_set_timezone_str(FSettings *settings, const char *Name);
 const char *settings_get_timezone_str(const FSettings *settings);
+
+void settings_set_clock_style(FSettings *settings, uint8_t style);
+uint8_t settings_get_clock_style(const FSettings *settings);
+void settings_set_status_bar_clock(FSettings *settings, bool enabled);
+bool settings_get_status_bar_clock(const FSettings *settings);
 
 void settings_set_accent_color_str(FSettings *settings, const char *Name);
 const char *settings_get_accent_color_str(const FSettings *settings);
@@ -578,6 +598,10 @@ uint8_t settings_get_neopixel_max_brightness(const FSettings *settings);
 // Encoder direction inversion settings
 void settings_set_encoder_invert_direction(FSettings *settings, bool enabled);
 bool settings_get_encoder_invert_direction(const FSettings *settings);
+#ifdef CONFIG_USE_ENCODER
+void settings_set_encoder_legacy_latch(FSettings *settings, bool enabled);
+bool settings_get_encoder_legacy_latch(const FSettings *settings);
+#endif
 
 void settings_set_auto_save_scans(FSettings *settings, bool enabled);
 bool settings_get_auto_save_scans(const FSettings *settings);
@@ -665,6 +689,8 @@ bool settings_get_epilepsy_warning_enabled(const FSettings *settings);
 
 void settings_set_font_size(FSettings *settings, uint8_t size);
 uint8_t settings_get_font_size(const FSettings *settings);
+void settings_set_row_height(FSettings *settings, uint8_t height);
+uint8_t settings_get_row_height(const FSettings *settings);
 void settings_set_reduced_motion(FSettings *settings, bool enabled);
 bool settings_get_reduced_motion(const FSettings *settings);
 void settings_set_input_repeat_speed(FSettings *settings, uint8_t speed);

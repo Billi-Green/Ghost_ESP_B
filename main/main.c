@@ -25,6 +25,7 @@
 #include "managers/plugin_manager.h"
 #include "esp_wifi.h"
 #include "core/esp_comm_manager.h"
+#include "core/ghostlink_bench.h"
 #include "managers/status_display_manager.h"
 #if defined(CONFIG_IDF_TARGET_ESP32P4)
 #include "esp_hosted.h"
@@ -51,6 +52,7 @@
 #include "esp_heap_caps.h"
 #include "managers/usb_keyboard_manager.h"
 #include "managers/subghz_remote_manager.h"
+#include "managers/lora_manager.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -216,6 +218,10 @@ time_t timegm(struct tm *tm) {
     int y = tm->tm_year + 1900;
     int m = tm->tm_mon + 1;
     int d = tm->tm_mday;
+    // Callers (RTC restore, minmea) can hand us unvalidated fields; clamp the
+    // month so days_before_month[] can never be indexed out of range.
+    if (m < 1) m = 1;
+    if (m > 12) m = 12;
     // Days from 1970-01-01 to year y, month m, day d
     static const int days_before_month[12] = {
         0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334
@@ -604,6 +610,20 @@ static void deferred_sd_init_task(void *arg) {
     // Short initial delay: the splash holds the screen during boot work, so we
     // only need enough time for splash_create to render the progress bar.
     vTaskDelay(pdMS_TO_TICKS(200));
+#if defined(CONFIG_HAS_LORA) && (defined(CONFIG_CROWPANEL_ADVANCE_RGB_LCD) || \
+                                defined(CONFIG_CROWPANEL_ADVANCE_SMALL_SPI_LCD))
+    // CrowPanel Advance wireless-module mode owns a SPI host/function-mux
+    // path. The 4.3 board shares GPIO4/5/6 with TF; the 2.4/2.8 boards keep
+    // the display on SPI2 and reserve SPI3 for the radio. In either case SD
+    // probing would claim or reconfigure the radio path, so leave SD off.
+    ESP_LOGI(TAG, "SD init skipped: CrowPanel wireless-module mode owns shared pins");
+#ifdef CONFIG_WITH_SCREEN
+    boot_status_set_progress(100.0f, "LoRa wireless module mode");
+    boot_status_signal_completion();
+#endif
+    vTaskDelete(NULL);
+    return;
+#endif
     ESP_LOGI(TAG, "Deferred SD Card init starting");
 
 #ifdef CONFIG_WITH_SCREEN
@@ -799,6 +819,9 @@ void app_main(void) {
 #if !defined(CONFIG_IDF_TARGET_ESP32S2)
     // MEASURE_INIT_RAM("BLE Manager", ble_init());
 #endif
+#ifdef CONFIG_HAS_LORA
+    MEASURE_INIT_RAM("LoRa Manager", lora_manager_early_init_off_main());
+#endif
 #ifdef CONFIG_HAS_BADUSB
     MEASURE_INIT_RAM("BadUSB Manager", badusb_manager_init());
 #endif
@@ -965,6 +988,7 @@ void app_main(void) {
 #endif
     wardriving_register_stream_handler();
     usb_keyboard_manager_register_stream_handler();
+    ghostlink_bench_init();
 #ifdef CONFIG_HAS_BADUSB
     badusb_manager_register_stream_handler();
 #endif
@@ -1053,7 +1077,6 @@ void app_main(void) {
         joystick_init(&joysticks[2], 0, HOLD_LIMIT, true);  // Up (P00)
         joystick_init(&joysticks[3], 4, HOLD_LIMIT, true);  // Right (P04)
         joystick_init(&joysticks[4], 1, HOLD_LIMIT, true);  // Down (P01)
-#endif
     } else {
 #ifdef CONFIG_BANSHEE_LITE_C5
         printf("IO Expander initialization failed; C5 joystick input unavailable\n");
@@ -1094,6 +1117,7 @@ void app_main(void) {
     joystick_init(&joysticks[3], CONFIG_R_BTN, HOLD_LIMIT, true);  // Right
     joystick_init(&joysticks[4], CONFIG_D_BTN, HOLD_LIMIT, true);  // Down
 #endif
+    printf("Joystick: GPIO buttons\n");
 #if defined(CONFIG_JOYSTICK_COM_PIN) && CONFIG_JOYSTICK_COM_PIN >= 0
     {
         gpio_config_t com_conf = {
@@ -1108,7 +1132,6 @@ void app_main(void) {
     }
 #endif
 #endif
-    printf("Joystick Setup Successfully...\n");
 #endif
     ESP_LOGI(TAG, "Initializing display manager");
     MEASURE_INIT_RAM("Display Manager", display_manager_init() );
@@ -1264,6 +1287,7 @@ void app_main(void) {
 #endif
     }
 
+    printf("\n");
     ESP_LOGI(TAG, "Build config used: %s", CONFIG_BUILD_CONFIG_TEMPLATE);
     printf("Build Name: %s\n", CONFIG_BUILD_CONFIG_TEMPLATE);
     
@@ -1299,10 +1323,21 @@ void app_main(void) {
     // the fields as local time, shifting the restored clock by the timezone
     // offset; timegm() interprets the fields as UTC instead.
     RTC_Date rtc_time;
-    if (rtc_get_datetime(&rtc_time) == ESP_OK) {
+    bool rtc_valid = false;
+    bool fields_ok = false;
+    if (rtc_check_time_valid(&rtc_valid) != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to read RTC validity flags, keeping default time");
+    } else if (!rtc_valid) {
+        ESP_LOGW(TAG, "RTC time not valid (power lost/oscillator stopped), keeping default time");
+    } else if (rtc_get_datetime(&rtc_time) == ESP_OK) {
         struct timeval tv = {0};
         struct tm tm = {0};
-        
+
+        fields_ok = rtc_time.month >= 1 && rtc_time.month <= 12 &&
+                    rtc_time.day >= 1 && rtc_time.day <= 31 &&
+                    rtc_time.hour <= 23 && rtc_time.minute <= 59 &&
+                    rtc_time.second <= 59;
+
         tm.tm_year = rtc_time.year - 1900;
         tm.tm_mon = rtc_time.month - 1;
         tm.tm_mday = rtc_time.day;
@@ -1314,7 +1349,7 @@ void app_main(void) {
         tv.tv_sec = timegm(&tm);
         tv.tv_usec = 0;
         
-        if (tv.tv_sec > 1600000000) { // Valid time (after Sept 2020)
+        if (fields_ok && tv.tv_sec > 1600000000) { // Valid time (after Sept 2020)
             settimeofday(&tv, NULL);
             ESP_LOGI(TAG, "System time synchronized from RTC: %04d-%02d-%02d %02d:%02d:%02d", 
                      rtc_time.year, rtc_time.month, rtc_time.day, 
@@ -1336,6 +1371,7 @@ void app_main(void) {
     if (mem_monitor_err != ESP_OK) {
         ESP_LOGW(TAG, "Periodic RAM monitor failed to start: %s", esp_err_to_name(mem_monitor_err));
     }
+    printf("\n");
     print_boot_banner();
     printf("\n");
     printf("Type 'help' for available commands\n");
