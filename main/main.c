@@ -1077,6 +1077,7 @@ void app_main(void) {
         joystick_init(&joysticks[2], 0, HOLD_LIMIT, true);  // Up (P00)
         joystick_init(&joysticks[3], 4, HOLD_LIMIT, true);  // Right (P04)
         joystick_init(&joysticks[4], 1, HOLD_LIMIT, true);  // Down (P01)
+#endif
     } else {
 #ifdef CONFIG_BANSHEE_LITE_C5
         printf("IO Expander initialization failed; C5 joystick input unavailable\n");
