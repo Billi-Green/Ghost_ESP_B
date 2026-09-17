@@ -1160,6 +1160,35 @@ menu "Ghost ESP Options"
                     (screened boards), and SX1262-family backend with stock
                     Meshtastic air framing and BLE PhoneAPI app support.
 
+            config HAS_MESHCORE
+                bool "Enable MeshCore companion (SX1262-family)"
+                default y
+                depends on HAS_LORA
+                help
+                    Enable the MeshCore companion stack: the `meshcore` CLI,
+                    MeshCore on-air protocol (adverts, group + direct text,
+                    contacts, channels) and the vendored Ed25519 identity.
+                    Meshtastic and MeshCore share one radio and are mutually
+                    exclusive at runtime.
+
+                    Defaults to y wherever LoRa is enabled, so every Meshtastic
+                    build also ships the MeshCore switch.
+
+            choice MESHCORE_DEFAULT_REGION
+                prompt "MeshCore default preset"
+                depends on HAS_MESHCORE
+                default MESHCORE_REGION_US
+                help
+                    First-flash radio preset. Change at runtime with
+                    `meshcore set freq|bw|sf|cr`.
+
+                config MESHCORE_REGION_US
+                    bool "US/CA 910.525 MHz BW62.5 SF7 CR5"
+
+                config MESHCORE_REGION_EU
+                    bool "EU/UK 869.618 MHz BW62.5 SF8 CR8"
+            endchoice
+
             config LORA_SPI_HOST
                 int "LoRa SPI Host"
                 range 2 3

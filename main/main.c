@@ -53,6 +53,7 @@
 #include "managers/usb_keyboard_manager.h"
 #include "managers/subghz_remote_manager.h"
 #include "managers/lora_manager.h"
+#include "managers/meshcore_manager.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -821,6 +822,10 @@ void app_main(void) {
 #endif
 #ifdef CONFIG_HAS_LORA
     MEASURE_INIT_RAM("LoRa Manager", lora_manager_early_init_off_main());
+#endif
+#ifdef CONFIG_HAS_MESHCORE
+    // Loads/generates the Ed25519 identity from NVS; no radio access.
+    mc_manager_early_init();
 #endif
 #ifdef CONFIG_HAS_BADUSB
     MEASURE_INIT_RAM("BadUSB Manager", badusb_manager_init());

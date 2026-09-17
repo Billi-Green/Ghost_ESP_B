@@ -93,6 +93,12 @@ static void lora_module_enable(bool enabled) {
 static lora_hw_t s_hw;
 static uint32_t s_freq;
 static int s_sf, s_bw, s_tx, s_cr;
+// Active radio profile (sync word, preamble, LDRO). Defaults are Meshtastic;
+// MeshCore overrides them via lora_radio_init_profile().
+static uint8_t s_sync_reg0 = 0x24;
+static uint8_t s_sync_reg1 = 0xB4;
+static int s_preamble_len = 16;
+static int8_t s_ldro = -1; // -1 = auto
 static volatile bool s_ready = false;
 static volatile bool s_rx_on = false;
 static TaskHandle_t s_task = NULL;
@@ -235,14 +241,38 @@ static int rd_reg(uint16_t addr, uint8_t *vals, uint8_t n) {
     return 0;
 }
 
-static uint8_t bw_reg(int bw_khz) {
-    // SX126x SetModulationParams BW byte (datasheet + RadioLib:
-    // 125kHz=0x04, 250=0x05, 500=0x06). The old 0x38/0x48/0x58 values
-    // belong to no SX126x table — the modem never actually ran BW250,
-    // so stock nodes could neither hear us nor be heard.
-    if (bw_khz >= 500) return 0x06;
-    if (bw_khz >= 250) return 0x05;
-    return 0x04; // 125
+// SX126x SetModulationParams bandwidth byte. Covers the full SX126x table so
+// MeshCore's narrow presets (62.5 kHz and below) work; Meshtastic only uses
+// 125/250/500. Input is bandwidth in kHz x10 to keep 7.8..41.7 exact.
+static uint8_t bw_reg(int bw_khz_x10) {
+    switch (bw_khz_x10) {
+        case 78:   return 0x00; // 7.8 kHz
+        case 104:  return 0x08; // 10.4 kHz
+        case 156:  return 0x01; // 15.6 kHz
+        case 208:  return 0x09; // 20.8 kHz
+        case 312:  return 0x02; // 31.25 kHz
+        case 417:  return 0x0A; // 41.67 kHz
+        case 625:  return 0x03; // 62.5 kHz
+        case 1250: return 0x04; // 125 kHz
+        case 2500: return 0x05; // 250 kHz
+        case 5000: return 0x06; // 500 kHz
+        default: break;
+    }
+    // Legacy fallback for the 125/250/500 Meshtastic path.
+    if (bw_khz_x10 >= 5000) return 0x06;
+    if (bw_khz_x10 >= 2500) return 0x05;
+    if (bw_khz_x10 >= 1250) return 0x04;
+    if (bw_khz_x10 >= 625) return 0x03;
+    return 0x04;
+}
+
+// LDRO is required when the symbol time (2^SF / BW) exceeds 16.38 ms.
+static uint8_t ldro_for(int sf, int bw_khz_x10) {
+    if (s_ldro >= 0) return (uint8_t)s_ldro;
+    if (bw_khz_x10 <= 0) return 0;
+    // symbol_time_ms = 10 * 2^SF / bw_khz_x10
+    uint32_t sym_ms = (uint32_t)((1u << sf) * 10u) / (uint32_t)bw_khz_x10;
+    return sym_ms > 16 ? 0x01 : 0x00;
 }
 
 static void dio1_isr(void *arg) {
@@ -264,7 +294,7 @@ static void clear_irq(uint16_t mask) {
 // explicit-header RX.  RadioLib follows the same sequence.
 static int set_lora_packet_params(uint8_t payload_len) {
     uint8_t p[6] = {
-        0x00, 0x10, // 16-symbol preamble
+        (uint8_t)(s_preamble_len >> 8), (uint8_t)(s_preamble_len & 0xFF),
         0x00,       // explicit header
         payload_len,
         0x01,       // CRC on
@@ -383,10 +413,42 @@ int lora_radio_init(const lora_hw_t *hw, uint32_t freq_hz, int sf, int bw_khz, i
 }
 
 int lora_radio_init_ex(const lora_hw_t *hw, uint32_t freq_hz, int sf, int bw_khz, int tx_dbm, int cr_denom) {
-    if (!hw || freq_hz < 150000000U || freq_hz > 960000000U) return -1;
+    // Meshtastic stock profile: sync word 0x2B -> registers 0x24/0xB4,
+    // 16-symbol preamble, legacy SF11+/BW<=125 LDRO rule.
+    s_sync_reg0 = 0x24;
+    s_sync_reg1 = 0xB4;
+    s_preamble_len = 16;
+    s_ldro = (sf >= 11 && bw_khz <= 125) ? 1 : 0;
+    return lora_radio_init_profile(hw, &(lora_radio_profile_t){
+        .freq_hz = freq_hz,
+        .sf = sf,
+        .bw_khz_x10 = bw_khz * 10,
+        .cr_denom = cr_denom,
+        .tx_dbm = tx_dbm,
+        .sync_reg0 = s_sync_reg0,
+        .sync_reg1 = s_sync_reg1,
+        .preamble_len = 16,
+        .ldro = s_ldro,
+    });
+}
+
+int lora_radio_init_profile(const lora_hw_t *hw, const lora_radio_profile_t *profile) {
+    if (!hw || !profile) return -1;
+    uint32_t freq_hz = profile->freq_hz;
+    int sf = profile->sf;
+    int bw_khz_x10 = profile->bw_khz_x10;
+    int tx_dbm = profile->tx_dbm;
+    int cr_denom = profile->cr_denom;
+    int bw_khz = bw_khz_x10 / 10;
+    if (freq_hz < 150000000U || freq_hz > 960000000U) return -1;
     if (sf < 5 || sf > 12) return -1;
+    if (bw_khz_x10 < 78 || bw_khz_x10 > 5000) return -1;
     if (cr_denom < 5) cr_denom = 5;
     if (cr_denom > 8) cr_denom = 8;
+    s_sync_reg0 = profile->sync_reg0;
+    s_sync_reg1 = profile->sync_reg1;
+    s_preamble_len = profile->preamble_len > 0 ? profile->preamble_len : 16;
+    s_ldro = profile->ldro;
     if (!s_mutex) s_mutex = xSemaphoreCreateMutex();
     lock();
     s_hw = *hw;
@@ -548,20 +610,19 @@ int lora_radio_init_ex(const lora_hw_t *hw, uint32_t freq_hz, int sf, int bw_khz
     {
         uint8_t mp[4];
         mp[0] = (uint8_t)sf;
-        mp[1] = bw_reg(bw_khz);
+        mp[1] = bw_reg(bw_khz_x10);
         mp[2] = (uint8_t)(cr_denom - 4); // SX126x CR: 0x01=4/5 .. 0x04=4/8
-        mp[3] = 0x00; // LDRO off (auto below for SF11/12@125)
-        if (sf >= 11 && bw_khz <= 125) mp[3] = 0x01;
+        mp[3] = ldro_for(sf, bw_khz_x10);
         RCHECK(cmdN(OP_SET_MOD_PARAMS, mp, sizeof(mp)), "modem");
     }
     {
         RCHECK(set_lora_packet_params(0xFF), "pkt-params");
     }
     {
-        // Meshtastic calls RadioLib setSyncWord(0x2B).  SX126x stores the
-        // nibbles interleaved with RadioLib's 0x44 control bits, yielding
-        // 0x24, 0xB4 at 0x0740/0x0741.
-        const uint8_t sw[2] = {0x24, 0xB4};
+        // Sync word is profile-selected: Meshtastic keeps 0x2B (stored as
+        // 0x24/0xB4), MeshCore uses 0x12 (stored as 0x14/0x24). The values are
+        // pre-expanded by the caller via the SX126x setSyncWord mapping.
+        const uint8_t sw[2] = {s_sync_reg0, s_sync_reg1};
         RCHECK(wr_reg(0x0740, sw, 2), "syncword");
         uint8_t got[2] = {0};
         RCHECK(rd_reg(0x0740, got, 2), "syncword-read");

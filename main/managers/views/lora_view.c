@@ -7,6 +7,7 @@
 
 #include "esp_timer.h"
 #include "gui/gui_router.h"
+#include "gui/ios_toggle.h"
 #include "gui/lvgl_safe.h"
 #include "gui/options_view.h"
 #include "gui/design_tokens.h"
@@ -17,6 +18,9 @@
 #include "managers/lora_modem.h"
 #include "managers/lora_mesh.h"
 #include "managers/views/keyboard_screen.h"
+#ifdef CONFIG_HAS_MESHCORE
+#include "managers/meshcore_manager.h"
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,6 +81,7 @@ typedef enum {
     ACT_DEVICE_TX,
     ACT_DEVICE_HOP,
     ACT_DEVICE_ROLE,
+    ACT_PROTOCOL = 90,
     ACT_CHANNEL_BASE = 300,
     ACT_NODE_BASE = 100,
     ACT_MESSAGE_BASE = 200,
@@ -372,13 +377,105 @@ static void build_activity(void) {
     add_row(LV_SYMBOL_LEFT " Back", ACT_BACK);
 }
 
+#ifdef CONFIG_HAS_MESHCORE
+// ---- Protocol toggle (Meshtastic <-> MeshCore) -----------------------------
+// Mirrors the NFC view's PN532/ST25R backend row: off = Meshtastic,
+// on = MeshCore. The choice is persisted (NVS "mesh"/"mode") and shared with
+// the `mesh` CLI. If a radio is already running the toggle switches it live;
+// otherwise it just selects what the Radio row will start.
+static lv_obj_t *s_proto_btn;
+
+static bool proto_is_meshcore(void) {
+    return mc_manager_default_backend_meshcore();
+}
+
+static void proto_item_text(char *out, size_t out_len) {
+    if (!out || out_len == 0) return;
+    snprintf(out, out_len, "%s", proto_is_meshcore() ? "Protocol: MeshCore" : "Protocol: Meshtastic");
+}
+
+static lv_obj_t *proto_find_toggle(void) {
+    if (!s_proto_btn || !lv_obj_is_valid(s_proto_btn)) return NULL;
+    uint32_t n = lv_obj_get_child_cnt(s_proto_btn);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *child = lv_obj_get_child(s_proto_btn, i);
+        if (child && lv_obj_get_user_data(child) == IOS_TOGGLE_USER_DATA) return child;
+    }
+    return NULL;
+}
+
+static void proto_update(bool animate) {
+    if (!s_proto_btn || !lv_obj_is_valid(s_proto_btn)) return;
+    lv_obj_t *label = lv_obj_get_child(s_proto_btn, 0);
+    if (label) {
+        char text[40];
+        proto_item_text(text, sizeof(text));
+        lv_label_set_text(label, text);
+    }
+    lv_obj_t *toggle = proto_find_toggle();
+    if (toggle) ios_toggle_set_value(toggle, proto_is_meshcore(), animate);
+}
+
+static void proto_switch(void) {
+    bool to_meshcore = !proto_is_meshcore();
+    mc_manager_set_default_backend_meshcore(to_meshcore);
+
+    bool mc_run = mc_manager_is_running();
+    bool mt_run = lora_manager_is_running();
+    if (to_meshcore) {
+        if (mc_run) return;                 // already live
+        if (mt_run) lora_manager_stop();    // one radio
+        if (!mc_manager_start()) notice(mc_manager_last_error(), TOAST_ERROR);
+        else notice("MeshCore started", TOAST_SUCCESS);
+    } else {
+        if (mt_run) return;
+        if (mc_run) mc_manager_stop();
+        if (lora_manager_needs_setup()) notice("Set region first", TOAST_WARN);
+        else if (!lora_manager_start()) notice(lora_manager_last_error(), TOAST_ERROR);
+        else notice("Meshtastic started", TOAST_SUCCESS);
+    }
+}
+
+static void proto_event_cb(lv_event_t *e) {
+    proto_switch();
+    // Touch events carry `e` (animate); encoder/keyboard events pass NULL.
+    proto_update(e != NULL);
+}
+
+static void add_protocol_toggle(void) {
+    char text[40];
+    proto_item_text(text, sizeof(text));
+    s_proto_btn = options_view_add_item(s_ov, text, proto_event_cb, NULL);
+    if (!s_proto_btn) return;
+    lv_obj_set_flex_flow(s_proto_btn, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(s_proto_btn, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER,
+                          LV_FLEX_ALIGN_CENTER);
+    lv_obj_t *label = lv_obj_get_child(s_proto_btn, 0);
+    if (label) {
+        lv_obj_set_flex_grow(label, 1);
+        lv_obj_set_width(label, LV_SIZE_CONTENT);
+    }
+    lv_obj_t *toggle = ios_toggle_create(s_proto_btn);
+    lv_obj_update_layout(s_proto_btn);
+    ios_toggle_set_value(toggle, proto_is_meshcore(), false);
+}
+#endif // CONFIG_HAS_MESHCORE
+
 static void build_settings(void) {
     lora_status_t st = {0};
     lora_manager_get_status(&st);
     options_view_set_title(s_ov, "Radio Settings");
     char line[96];
+#ifdef CONFIG_HAS_MESHCORE
+    add_protocol_toggle();
+    bool mc_selected = proto_is_meshcore();
+    bool running = mc_selected ? mc_manager_is_running() : st.running;
+    snprintf(line, sizeof(line), "Radio: %s - tap to %s", running ? "ON" : "OFF",
+             running ? "stop" : "start");
+#else
     snprintf(line, sizeof(line), "Radio: %s - tap to %s", st.running ? "ON" : "OFF",
              st.running ? "stop" : "start");
+#endif
     add_row(line, ACT_RADIO);
     snprintf(line, sizeof(line), "Region: %s%s - tap to change",
              lora_region_name((int)st.region),
@@ -841,6 +938,18 @@ static void action_click(lv_event_t *e) {
 
     switch ((lora_action_t)action) {
     case ACT_RADIO: {
+#ifdef CONFIG_HAS_MESHCORE
+        if (proto_is_meshcore()) {
+            bool mc_stopping = mc_manager_is_running();
+            bool mc_ok = true;
+            if (mc_stopping) mc_manager_stop();
+            else mc_ok = mc_manager_start();
+            notice(mc_ok ? (mc_stopping ? "MeshCore stopped" : "MeshCore started")
+                         : mc_manager_last_error(), mc_ok ? TOAST_SUCCESS : TOAST_ERROR);
+            rebuild_page();
+            break;
+        }
+#endif
         bool stopping = lora_manager_is_running();
         bool ok = true;
         if (stopping) lora_manager_stop();

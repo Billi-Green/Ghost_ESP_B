@@ -11,6 +11,7 @@
 #include "managers/lora_sx1262.h"
 #include "managers/lora_ble.h"
 #include "managers/lora_phoneapi.h"
+#include "managers/meshcore_manager.h"
 #include "esp_random.h"
 #include "sdkconfig.h"
 #include <string.h>
@@ -40,7 +41,8 @@ void handle_lora_cmd(int argc, char **argv) {
              "lora channels        Show 8 channel slots\n"
              "lora region <name>   Set region while stopped (e.g. anz)\n"
              "lora set <preset|sf|bw|cr|tx|hop|offset|ovrfreq|chnum|txen|role|owner|companion> <value>\n"
-             "Advanced: diag, cad, reg, ble, app, setup\n");
+             "Advanced: diag, cad, reg, ble, app, setup\n"
+             "Tip: `mesh` shows the active mesh and switches Meshtastic <-> MeshCore\n");
         return;
     }
     const char *sub = argc < 2 ? "status" : argv[1];
@@ -75,6 +77,13 @@ void handle_lora_cmd(int argc, char **argv) {
         return;
     }
     if (strcmp(sub, "start") == 0) {
+#ifdef CONFIG_HAS_MESHCORE
+        // One radio: release it from MeshCore before Meshtastic claims it.
+        if (mc_manager_is_running()) {
+            mc_manager_stop();
+            glog("Stopped MeshCore (one radio: Meshtastic now owns it)\n");
+        }
+#endif
         if (lora_manager_needs_setup()) {
             char q[640];
             if (lora_manager_setup_text(q, sizeof(q))) glog("%s", q);
