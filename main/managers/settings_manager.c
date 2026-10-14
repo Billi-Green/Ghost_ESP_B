@@ -163,6 +163,7 @@ static const char *NVS_LOCKSCREEN_TYPE_KEY = "ls_type";
 static const char *NVS_LOCKSCREEN_OBF_KEY = "ls_obf";
 static const char *NVS_LOCKSCREEN_TIMEOUT_KEY = "ls_tout";
 static const char *NVS_LOCKSCREEN_WAKE_KEY = "ls_wake";
+static const char *NVS_LOCKSCREEN_SLIDE_KEY = "ls_slide";
 
 // Wardriving NVS keys
 static const char *NVS_WD_HOP_PRIMARY_KEY = "wd_hop_prim";
@@ -336,12 +337,13 @@ void settings_set_defaults(FSettings *settings) {
   settings->wd_hop_helper_ms = 125;
   settings->wd_weighted_5g = true;
 
-  // Lockscreen defaults (disabled by default)
-  settings->lockscreen_enabled = false;
-  settings->lockscreen_type = 1;         // PIN-only for now
+  // Lockscreen defaults: enabled, with no PIN configured.
+  settings->lockscreen_enabled = true;
+  settings->lockscreen_type = 1;         // Persisted PIN type; an empty blob allows press-to-unlock
   memset(settings->lockscreen_obfuscated, 0, sizeof(settings->lockscreen_obfuscated));
   settings->lockscreen_timeout_sec = 0;    // Off
   settings->lockscreen_wake_lock = true;  // Default to locking on wake
+  settings->lockscreen_slide_unlock = true; // Touch boards: slide-to-unlock on by default (opt-out)
 
 #ifdef CONFIG_WITH_STATUS_DISPLAY
   settings->status_idle_animation = IDLE_ANIM_GAME_OF_LIFE;
@@ -1133,6 +1135,10 @@ void settings_load(FSettings *settings) {
   if (err == ESP_OK) {
     settings->lockscreen_wake_lock = (bool)value_u8;
   }
+  err = nvs_get_u8(nvsHandle, NVS_LOCKSCREEN_SLIDE_KEY, &value_u8);
+  if (err == ESP_OK) {
+    settings->lockscreen_slide_unlock = (bool)value_u8;
+  }
 
   // Load wardriving settings
   uint16_t value_u16_wd = 0;
@@ -1540,6 +1546,10 @@ void settings_persist_setting(SettingsType setting) {
             err = nvs_set_blob(nvsHandle, NVS_LOCKSCREEN_OBF_KEY, G_Settings.lockscreen_obfuscated, sizeof(G_Settings.lockscreen_obfuscated));
             key = NVS_LOCKSCREEN_OBF_KEY;
             break;
+        case SETTING_LOCKSCREEN_SLIDE:
+            err = nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_SLIDE_KEY, G_Settings.lockscreen_slide_unlock ? 1 : 0);
+            key = NVS_LOCKSCREEN_SLIDE_KEY;
+            break;
         case SETTING_WD_HOP_PRIMARY:
             err = nvs_set_u16(nvsHandle, NVS_WD_HOP_PRIMARY_KEY, G_Settings.wd_hop_primary_ms);
             key = NVS_WD_HOP_PRIMARY_KEY;
@@ -1854,6 +1864,7 @@ esp_err_t settings_save(const FSettings *settings) {
     NVS_SET(nvs_set_blob(nvsHandle, NVS_LOCKSCREEN_OBF_KEY, settings->lockscreen_obfuscated, sizeof(settings->lockscreen_obfuscated)));
     NVS_SET(nvs_set_u16(nvsHandle, NVS_LOCKSCREEN_TIMEOUT_KEY, settings->lockscreen_timeout_sec));
     NVS_SET(nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_WAKE_KEY, settings->lockscreen_wake_lock ? 1 : 0));
+    NVS_SET(nvs_set_u8(nvsHandle, NVS_LOCKSCREEN_SLIDE_KEY, settings->lockscreen_slide_unlock ? 1 : 0));
 
     NVS_SET(nvs_set_u16(nvsHandle, NVS_WD_HOP_PRIMARY_KEY, settings->wd_hop_primary_ms));
     NVS_SET(nvs_set_u16(nvsHandle, NVS_WD_HOP_HELPER_KEY, settings->wd_hop_helper_ms));
@@ -2878,6 +2889,12 @@ void settings_set_lockscreen_wake_lock(FSettings *settings, bool enabled) {
 }
 bool settings_get_lockscreen_wake_lock(const FSettings *settings) {
   return settings ? settings->lockscreen_wake_lock : true;
+}
+void settings_set_lockscreen_slide_unlock(FSettings *settings, bool enabled) {
+  if (settings) settings->lockscreen_slide_unlock = enabled;
+}
+bool settings_get_lockscreen_slide_unlock(const FSettings *settings) {
+  return settings ? settings->lockscreen_slide_unlock : true;
 }
 
 // Wardriving settings

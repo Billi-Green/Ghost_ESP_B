@@ -141,7 +141,10 @@ static void handshake_deauth_task(void *param);
 // gone by the time any attack task runs. This helper just handles transient
 // channel-set failures with one quick retry.
 static esp_err_t deauth_set_channel_robust(int channel) {
-    if (channel < 1 || channel > MAX_WIFI_CHANNEL) return ESP_ERR_INVALID_ARG;
+    if (channel < 1 || channel > 255 ||
+        !wifi_channels_is_tx_channel((uint8_t)channel)) {
+        return ESP_ERR_INVALID_ARG;
+    }
     uint8_t cur_ch = 0;
     wifi_second_chan_t cur_sec = WIFI_SECOND_CHAN_NONE;
     if (esp_wifi_get_channel(&cur_ch, &cur_sec) == ESP_OK && cur_ch == (uint8_t)channel) {
@@ -173,8 +176,7 @@ esp_err_t deauth_attack_broadcast(uint8_t bssid[6], int channel, uint8_t mac[6])
     esp_err_t err = deauth_set_channel_robust(channel);
     if (err != ESP_OK) {
         deauth_log_channel_error_throttled(channel, err);
-        // Don't abort TX: still try to inject on current channel (may still affect co-channel targets)
-        // But if channel mismatch, effectiveness will be reduced
+        return err;
     }
 
     // Create packets from templates
@@ -346,14 +348,20 @@ static void deauth_task(void *param) {
     vTaskDeleteWithCaps(NULL);
 }
 
+/* Prints a note about whether deauth is expected to get through, if there is
+ * anything worth saying. The messages are already written as plain sentences,
+ * so no "WARNING:" prefix is added on top. */
+static void deauth_print_effectiveness_note(const char *note) {
+    if (note != NULL && *note) {
+        glog("%s\n", note);
+        TERMINAL_VIEW_ADD_TEXT("%s\n", note);
+    }
+}
+
 void deauth_attack_start(void) {
     if (!deauth_task_running) {
         extern wifi_ap_record_t selected_ap;
-        const char *pmf_warning = wpa3_deauth_warning(&selected_ap);
-        if (pmf_warning) {
-            glog("WARNING: %s\n", pmf_warning);
-            TERMINAL_VIEW_ADD_TEXT("WARNING: %s\n", pmf_warning);
-        }
+        deauth_print_effectiveness_note(wpa3_deauth_warning(&selected_ap));
         ap_manager_stop_services();
         ghostchi_manager_add_xp(3);
 
@@ -482,7 +490,8 @@ void deauth_attack_start_station(void) {
         deauth_attack_start();
         return;
     }
-    glog("WARNING: PMF posture is not available for the selected station; deauth effectiveness is unverified.\n");
+    deauth_print_effectiveness_note(wpa3_deauth_warning_for_authmode(
+        (wifi_auth_mode_t)selected_station_local.ap_authmode));
     if (deauth_station_task_handle) {
         printf("Station deauth already running.\n");
         return;
@@ -518,22 +527,28 @@ void deauth_attack_start_station(void) {
 // Background task for deauthenticating a selected station and logging packet rate
 static void deauth_station_task(void *param) {
     // Get the channel from the scanned AP that matches the target BSSID
-    int deauth_channel = 1;
+    int deauth_channel = 0;
     for (int i = 0; i < ap_count; i++) {
         if (memcmp(scanned_aps[i].bssid, selected_station_local.ap_bssid, 6) == 0) {
             deauth_channel = scanned_aps[i].primary;
             break;
         }
     }
-    
-    // Validate channel is within allowed range
-    if (deauth_channel < 1 || deauth_channel > MAX_WIFI_CHANNEL) {
-        deauth_channel = 1; // fallback channel
+
+    if (deauth_channel < 1 ||
+        !wifi_channels_is_tx_channel((uint8_t)deauth_channel)) {
+        glog("Unable to find a legal TX channel for selected station\n");
+        station_selected_local = false;
+        deauth_station_stop_requested = true;
+        return;
     }
     // Initial channel set with retry and throttled error logging
     esp_err_t init_ch_err = deauth_set_channel_robust(deauth_channel);
     if (init_ch_err != ESP_OK) {
         deauth_log_channel_error_throttled(deauth_channel, init_ch_err);
+        station_selected_local = false;
+        deauth_station_stop_requested = true;
+        return;
     }
     uint32_t last_log = xTaskGetTickCount() * portTICK_PERIOD_MS;
     while (!deauth_station_stop_requested) {
@@ -712,10 +727,13 @@ void deauth_attack_start_handshake_deauth(void) {
 #endif
             return;
         }
-        const char *pmf_warning = wpa3_deauth_warning(&selected_ap_local);
-        if (pmf_warning) glog("WARNING: %s\n", pmf_warning);
+        deauth_print_effectiveness_note(wpa3_deauth_warning(&selected_ap_local));
     } else {
-        glog("WARNING: PMF posture is not available for the selected station; deauth effectiveness is unverified.\n");
+        /* A station record carries the security type of the AP it was seen on,
+         * so the network can still be described even though there is no AP
+         * record to hand. */
+        deauth_print_effectiveness_note(wpa3_deauth_warning_for_authmode(
+            (wifi_auth_mode_t)selected_station_local.ap_authmode));
     }
 
     ap_manager_stop_services();

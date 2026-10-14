@@ -163,6 +163,7 @@ typedef enum {
     SETTING_LOCKSCREEN_TYPE,
     SETTING_LOCKSCREEN_TIMEOUT,
     SETTING_LOCKSCREEN_CHANGE_PIN,
+    SETTING_LOCKSCREEN_SLIDE,
     // Wardriving settings
     SETTING_WD_HOP_PRIMARY,
     SETTING_WD_HOP_HELPER,
@@ -396,6 +397,7 @@ typedef struct {
     char lockscreen_obfuscated[32]; // Length-prefixed obfuscated PIN blob
     uint16_t lockscreen_timeout_sec;   // Auto-lock after inactivity (0=off)
     bool lockscreen_wake_lock;        // Lock on wake-from-sleep
+    bool lockscreen_slide_unlock;     // Touch-only: Apple-style slide-to-unlock (no-PIN mode)
 
     // Wardriving settings
     uint16_t wd_hop_primary_ms;      // Primary chip hop interval (50-500ms)
@@ -727,6 +729,8 @@ void settings_set_lockscreen_timeout_sec(FSettings *settings, uint16_t sec);
 uint16_t settings_get_lockscreen_timeout_sec(const FSettings *settings);
 void settings_set_lockscreen_wake_lock(FSettings *settings, bool enabled);
 bool settings_get_lockscreen_wake_lock(const FSettings *settings);
+void settings_set_lockscreen_slide_unlock(FSettings *settings, bool enabled);
+bool settings_get_lockscreen_slide_unlock(const FSettings *settings);
 
 // Wardriving settings
 void settings_set_wd_hop_primary_ms(FSettings *settings, uint16_t ms);

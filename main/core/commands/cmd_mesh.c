@@ -88,7 +88,8 @@ static void print_switch_hint(void) {
 static void cmd_status(void) {
     mesh_backend_t b = active_backend();
     if (b == MESH_BACKEND_NONE) {
-        glog("Mesh: idle - no protocol is using the radio\n");
+        glog("Mesh: idle - no protocol is using the radio (boot selection: %s)\n",
+             backend_name(stored_backend()));
     } else {
         glog("Mesh: %s is active\n", backend_name(b));
 #ifdef CONFIG_HAS_MESHCORE
@@ -141,6 +142,13 @@ static void cmd_switch(mesh_backend_t want) {
         return;
     }
 #endif
+#ifdef CONFIG_HAS_LORA
+    if (want == MESH_BACKEND_MESHTASTIC && lora_manager_needs_setup()) {
+        char q[640];
+        if (lora_manager_setup_text(q, sizeof(q))) glog("%s", q);
+        return;
+    }
+#endif
 
     mesh_backend_t cur = active_backend();
     if (cur == want) {
@@ -149,18 +157,6 @@ static void cmd_switch(mesh_backend_t want) {
         return;
     }
 
-    if (cur != MESH_BACKEND_NONE) {
-        glog("Stopping %s (one radio)...\n", backend_name(cur));
-        if (cur == MESH_BACKEND_MESHCORE) {
-            char *a[] = {(char *)"meshcore", (char *)"stop"};
-            handle_meshcore_cmd(2, a);
-        } else {
-            char *a[] = {(char *)"lora", (char *)"stop"};
-            handle_lora_cmd(2, a);
-        }
-    }
-
-    store_backend(want);
     glog("Starting %s...\n", backend_name(want));
     if (want == MESH_BACKEND_MESHCORE) {
         char *a[] = {(char *)"meshcore", (char *)"start"};
@@ -170,8 +166,14 @@ static void cmd_switch(mesh_backend_t want) {
         handle_lora_cmd(2, a);
     }
 
-    if (active_backend() == want) glog("Active mesh: %s\n", backend_name(want));
-    else glog("Active mesh: none (start failed - see message above)\n");
+    if (active_backend() == want) {
+        /* The backend command persists its selection only after a successful
+         * start. Keep this fallback for implementations that do not. */
+        store_backend(want);
+        glog("Active mesh: %s\n", backend_name(want));
+    } else {
+        glog("Active mesh: none (start failed - see message above)\n");
+    }
     print_switch_hint();
 }
 
@@ -221,6 +223,7 @@ static void print_help(void) {
          "  mesh                     show what is active + how to switch\n"
          "  mesh on [proto]          start the remembered protocol\n"
          "  mesh off                 stop the active protocol\n"
+         "  mesh autostart <meshtastic|meshcore|off>  what boots on power-up\n"
          "\n"
          "Active-mesh verbs:\n"
          "  mesh send <text>         send on channel 0\n"
@@ -229,6 +232,7 @@ static void print_help(void) {
          "  mesh peers               nodes (Meshtastic) / contacts (MeshCore)\n"
          "  mesh channels            list channels\n"
          "  mesh app [on|off]        BLE app link\n"
+         "  mesh pin <none|random|fixed [pin]>  Meshtastic app pairing PIN\n"
          "  mesh selftest            backend self test\n"
          "\n"
          "Protocol-specific commands stay under `lora` and `meshcore`.\n"
@@ -255,6 +259,23 @@ void handle_mesh_cmd(int argc, char **argv) {
         return;
     }
 
+    // Boot auto-start selection: share the `lora autostart` implementation so
+    // `mesh autostart meshcore` etc. behave identically.
+    if (!strcmp(verb, "autostart")) {
+#ifdef CONFIG_HAS_LORA
+        if (argc >= 3) {
+            char *a[] = {(char *)"lora", (char *)"autostart", argv[2]};
+            handle_lora_cmd(3, a);
+        } else {
+            char *a[] = {(char *)"lora", (char *)"autostart"};
+            handle_lora_cmd(2, a);
+        }
+#else
+        glog("LoRa not enabled on this board\n");
+#endif
+        return;
+    }
+
     // Protocol namespaces: `mesh meshtastic ...` / `mesh meshcore ...`
     mesh_backend_t ns = parse_backend(verb);
     if (ns == MESH_BACKEND_MESHTASTIC) {
@@ -274,6 +295,21 @@ void handle_mesh_cmd(int argc, char **argv) {
         handle_meshcore_cmd(argc - 1, argv);
 #else
         glog("MeshCore not enabled on this board\n");
+#endif
+        return;
+    }
+
+    // Meshtastic app pairing PIN: `mesh pin <none|random|fixed [pin]>`
+    // (also accepts `mesh ble pin ...`) -> `lora ble pin ...`.
+    if (!strcmp(verb, "pin") || (!strcmp(verb, "ble") && argc >= 3 && !strcmp(argv[2], "pin"))) {
+#ifdef CONFIG_HAS_LORA
+        int skip = !strcmp(verb, "ble") ? 3 : 2; // args after "pin"
+        char *a[6] = {(char *)"lora", (char *)"ble", (char *)"pin"};
+        int n = 3;
+        for (int i = skip; i < argc && n < 6; ++i) a[n++] = argv[i];
+        handle_lora_cmd(n, a);
+#else
+        glog("Meshtastic not enabled on this board\n");
 #endif
         return;
     }

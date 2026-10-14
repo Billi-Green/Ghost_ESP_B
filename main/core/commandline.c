@@ -145,7 +145,7 @@ static Command *command_list_head = NULL;
 static Command *command_pool = NULL;
 static Command *command_free_list = NULL;
 
-#define COMMAND_REGISTRY_MAX 192
+#define COMMAND_REGISTRY_MAX 256
 TaskHandle_t VisualizerHandle = NULL;
 TaskHandle_t gps_info_task_handle = NULL;
 

@@ -1,5 +1,8 @@
 #include "managers/display_manager.h"
 #include "driver/gpio.h"
+#ifdef CONFIG_IS_S3TWATCH
+#include "driver/usb_serial_jtag.h"
+#endif
 #include <time.h>
 #include "esp_sleep.h"
 #include "esp_timer.h"
@@ -687,6 +690,29 @@ static void kb_repeat_stop(void) {
     }
 }
 
+// A key held across a view switch must not keep repeating into the new view:
+// e.g. Enter held to activate an option would otherwise submit empty lines in
+// the terminal that option just opened. Worse, if the LVGL task was blocked
+// (scan, delay) while held, repeats pile up in the queue and flood the new
+// view once it unblocks. Runs on the LVGL task, same as the queue consumer.
+static void kb_repeat_cancel_for_view_switch(void) {
+    kb_repeat_stop();
+    if (!input_queue) return;
+    InputEvent ev;
+    InputEvent kept[32];
+    int n = 0;
+    int guard = 0;
+    while (guard++ < 64 && xQueueReceive(input_queue, &ev, 0) == pdTRUE) {
+        if (ev.type == INPUT_TYPE_KEYBOARD && ev.is_repeat) continue;
+        if (n < 32) kept[n++] = ev;
+        /* The queue itself is 32 deep; anything beyond that is concurrent
+         * arrivals, left queued rather than risking a non-terminating loop. */
+    }
+    for (int i = 0; i < n; i++) {
+        xQueueSend(input_queue, &kept[i], 0);
+    }
+}
+
 // Called after initial delay fires — switch to periodic repeat
 static void kb_repeat_initial_cb(void *arg) {
     (void)arg;
@@ -1168,10 +1194,22 @@ static bool get_battery_info(uint8_t *percentage, bool *is_charging) {
         result = true;
     }
 #elif defined(CONFIG_HAS_BATTERY)
-    // Fallback to AXP2101
-    axp2101_get_power_level(percentage);
-    *is_charging = axp202_is_charging();
-    result = true;
+    // Poll on a fixed interval even after failure; UI redraws must not flood
+    // the console or publish an uninitialized percentage when the PMU is absent.
+    static int64_t last_axp_poll_ms = -5000;
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    if (now_ms - last_axp_poll_ms >= 5000) {
+        last_axp_poll_ms = now_ms;
+        if (axp2101_get_power_level(percentage) == ESP_OK) {
+            *is_charging = axp202_is_charging();
+            result = true;
+        }
+    }
+    if (!result && last_valid_cache) {
+        *percentage = last_pct_cache;
+        *is_charging = last_chg_cache;
+        result = true;
+    }
 #elif defined(CONFIG_HAS_BATTERY_ADC)
     // Fallback to ADC
     int battery_percent = getBattery();
@@ -3478,6 +3516,7 @@ void display_manager_render_view(View *view) {
 #endif
   if (xSemaphoreTake(dm.mutex, pdMS_TO_TICKS(MUTEX_TIMEOUT_MS)) == pdTRUE) {
     ESP_LOGD(TAG, "Switching view from %s to %s", dm.current_view ? dm.current_view->name : "NULL", view->name);
+    kb_repeat_cancel_for_view_switch();
     if (view == &lockscreen_view) {
       display_manager_run_freeze_pre_lock();
     }
@@ -4092,6 +4131,7 @@ static bool touch_move_events_enabled_for_view_name(const char *view_name) {
           strcmp(view_name, "ENV-III") == 0 ||
           strcmp(view_name, "Favorites Manager") == 0 ||
           strcmp(view_name, "Menu Editor") == 0 ||
+          strcmp(view_name, "Setup Wizard") == 0 ||
           strcmp(view_name, "Lockscreen") == 0);
 }
 
@@ -4304,20 +4344,21 @@ void set_backlight_brightness(uint8_t percentage) {
         esp_sleep_disable_wifi_beacon_wakeup();
 
 #ifdef CONFIG_IS_S3TWATCH
-        // 2a) On S3T-Watch: only GPIO button can wake us
-        gpio_wakeup_enable(WAKE_UP_PIN, GPIO_INTR_LOW_LEVEL);
-        esp_sleep_enable_gpio_wakeup();
+        // Explicit light sleep ignores PM locks. Keep the USB console and UI
+        // tasks running while a host is attached, even with the panel dark.
+        if (!usb_serial_jtag_is_connected()) {
+            gpio_wakeup_enable(WAKE_UP_PIN, GPIO_INTR_LOW_LEVEL);
+            esp_sleep_enable_gpio_wakeup();
 
-        // 3a) Pause all UI and drop into light-sleep until that button is pressed
-        if (status_update_timer)   lv_timer_pause(status_update_timer);
-        if (status_update_timer)   lv_timer_set_period(status_update_timer, 5000);
+            // Pause UI and sleep until the button is pressed.
+            if (status_update_timer)   lv_timer_pause(status_update_timer);
+            if (status_update_timer)   lv_timer_set_period(status_update_timer, 5000);
 #ifndef CONFIG_USE_CARDPUTER
-        if (lvgl_task_handle)      vTaskSuspend(lvgl_task_handle);
+            if (lvgl_task_handle)      vTaskSuspend(lvgl_task_handle);
 #endif
-        if (rainbow_timer)         lv_timer_pause(rainbow_timer);
-        if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
-        if (clock_timer)           lv_timer_pause(clock_timer);
-        {
+            if (rainbow_timer)         lv_timer_pause(rainbow_timer);
+            if (terminal_update_timer) lv_timer_pause(terminal_update_timer);
+            if (clock_timer)           lv_timer_pause(clock_timer);
             if (!wifi_manager_is_evil_portal_active()) {
                 wifi_config_t cfg;
                 if (esp_wifi_get_config(WIFI_IF_AP, &cfg) == ESP_OK) {
@@ -4327,8 +4368,8 @@ void set_backlight_brightness(uint8_t percentage) {
                 }
                 esp_wifi_set_ps(WIFI_PS_MAX_MODEM);
             }
+            esp_light_sleep_start();
         }
-        esp_light_sleep_start();
 
 #else
         // 2b) On Cardputer (or other devices without real GPIO wake):
@@ -5416,6 +5457,14 @@ void hardware_input_task(void *pvParameters) {
     touch_driver_read(&touch_driver, &touch_data);
 #endif
 
+    /* Publish the raw panel state before any of the routing below. A canvas
+       app reads this through input_snapshot_ex() to clear its own held virtual
+       buttons on finger-up, so it has to reflect the panel even when this
+       press is swallowed (wake-from-dim, control-center pull) or the matching
+       release is later dropped. */
+    plugin_api_record_touch_state(touch_data.state == LV_INDEV_STATE_PR,
+                                  (int)touch_data.point.x, (int)touch_data.point.y);
+
     if (touch_data.state == LV_INDEV_STATE_PR && !touch_active) {
       bool skip_event = false;
       last_touch_time = xTaskGetTickCount();
@@ -5744,7 +5793,7 @@ static bool dm_handle_crowpanel_home_event(const InputEvent *event) {
 }
 #endif
 
-#ifdef CONFIG_BANSHEE_LITE_C5
+
 static void dm_transform_c5_touch_event(InputEvent *event) {
   if (!event || event->type != INPUT_TYPE_TOUCH) return;
 
@@ -5798,6 +5847,12 @@ static int dm_transform_c5_joystick_index(int physical_index, bool pressed) {
   return logical_index;
 }
 #endif
+
+void display_manager_flush_input_queue(void) {
+    if (!input_queue) return;
+    xQueueReset(input_queue);
+}
+
 
 void processEvent() {  // do not process events until the display manager is up
   if (!display_manager_init_success) {

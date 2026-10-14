@@ -1,4 +1,8 @@
+#include "sdkconfig.h"
 #include "boot_banner_text.h"
+#if defined(CONFIG_IDF_TARGET_ESP32) && defined(CONFIG_BT_ENABLED)
+#include "esp_bt.h"
+#endif
 #include "core/shell.h"
 #include "core/commandline.h"
 #include "core/callbacks.h"
@@ -79,7 +83,7 @@
 #include "managers/motion_detector_manager.h"
 #include "managers/camera_stream_manager.h"
 #endif
-#if defined(CONFIG_HAS_TLV320DAC_I2S) || defined(CONFIG_HAS_AW88298_SPEAKER) || defined(CONFIG_HAS_CROWPANEL_NS4168)
+#if defined(CONFIG_HAS_TLV320DAC_I2S) || defined(CONFIG_HAS_AW88298_SPEAKER) || defined(CONFIG_HAS_CROWPANEL_NS4168) || defined(CONFIG_HAS_TDECK_SPEAKER)
 #include "managers/audio_receiver_manager.h"
 #endif
 
@@ -211,6 +215,32 @@ RGBManager_t rgb_manager;  // Global instance for entire project
 
 int ieee80211_raw_frame_sanity_check(int32_t arg, int32_t arg2, int32_t arg3) { return 0; }
 static const char *TAG = "Main.c";
+
+/* Opt-in boot auto-start: start the remembered mesh protocol (NVS "mesh"/"mode"
+ * selects Meshtastic vs MeshCore). On display boards this runs late in
+ * app_main — after the AP manager, display and SD-init task have claimed their
+ * internal RAM — so a radio start can never price boot-critical allocations
+ * (like the 8 KiB SD task stack) out of the internal heap. Headless USB builds
+ * keep the early position. Idempotent: both managers no-op when running. */
+static void mesh_auto_start_boot(void) {
+#ifdef CONFIG_HAS_LORA
+    if (!lora_manager_auto_start_enabled()) return;
+#ifdef CONFIG_HAS_MESHCORE
+    if (mc_manager_default_backend_meshcore()) {
+        if (!mc_manager_is_running() && !mc_manager_start()) {
+            ESP_LOGW(TAG, "MeshCore auto-start failed: %s", mc_manager_last_error());
+        }
+        return;
+    }
+#endif
+    if (lora_manager_is_running()) return;
+    if (lora_manager_needs_setup()) {
+        ESP_LOGW(TAG, "Meshtastic auto-start skipped: region is not set");
+    } else if (!lora_manager_start()) {
+        ESP_LOGW(TAG, "Meshtastic auto-start failed: %s", lora_manager_last_error());
+    }
+#endif
+}
 
 /* timegm() is not available in ESP-IDF's newlib for ESP32-C5 (RISC-V).
  * Provide a minimal implementation that both main.c (RTC sync) and
@@ -686,6 +716,12 @@ static void deferred_sd_init_task(void *arg) {
 }
 
 void app_main(void) {
+#if defined(CONFIG_IDF_TARGET_ESP32) && defined(CONFIG_BT_ENABLED)
+    /* BLE is only used on demand, but the Classic BT controller's ~15KB DRAM
+     * is otherwise held until the first ble_init(). Nothing uses Classic BT
+     * (ble_manager releases it anyway), so return it to the heap now. */
+    (void)esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT);
+#endif
     memory_debug_init();
     memory_debug_start_boot_trace();
     MEASURE_INIT_RAM("Ghostchi Mood init", ghostchi_mood_init());
@@ -849,6 +885,9 @@ void app_main(void) {
 #endif
 
 #ifdef USB_MODULE
+    // Headless USB builds exit below; start the mesh before leaving, while the
+    // display-path memory pressure this board never sees does not apply.
+    mesh_auto_start_boot();
     wifi_manager_auto_deauth();
     return;
 #endif
@@ -1021,7 +1060,7 @@ void app_main(void) {
     mic_visualizer_start();
 #endif
 #endif
-#if defined(CONFIG_HAS_TLV320DAC_I2S) || defined(CONFIG_HAS_AW88298_SPEAKER) || defined(CONFIG_HAS_CROWPANEL_NS4168)
+#if defined(CONFIG_HAS_TLV320DAC_I2S) || defined(CONFIG_HAS_AW88298_SPEAKER) || defined(CONFIG_HAS_CROWPANEL_NS4168) || defined(CONFIG_HAS_TDECK_SPEAKER)
 #if !defined(CONFIG_WITH_SCREEN)
     // Headless boards only need the receiver when `audio start` runs; it
     // self-initializes there. Skip the boot-time I2S + decode task + 96KB
@@ -1199,6 +1238,12 @@ void app_main(void) {
                                             tskIDLE_PRIORITY + 1, NULL);
         if (sd_task_rc != pdPASS) {
             ESP_LOGE(TAG, "Failed to create SD Init task");
+#ifdef CONFIG_WITH_SCREEN
+            /* The splash only dismisses when this task signals completion.
+             * If the task could not be created (internal heap exhausted),
+             * release the splash here so boot can never wedge on the loader. */
+            boot_status_signal_completion();
+#endif
         }
     }
 
@@ -1292,6 +1337,12 @@ void app_main(void) {
         }
 #endif
     }
+
+    // Auto-start the remembered mesh protocol here, after every boot-critical
+    // internal allocation (AP manager, display/LVGL, splash, SD-init task
+    // stack) has been made. A failed start is logged and simply leaves the
+    // radio off instead of starving the boot.
+    mesh_auto_start_boot();
 
     printf("\n");
     ESP_LOGI(TAG, "Build config used: %s", CONFIG_BUILD_CONFIG_TEMPLATE);

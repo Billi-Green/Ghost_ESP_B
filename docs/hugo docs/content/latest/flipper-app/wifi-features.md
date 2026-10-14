@@ -1,6 +1,6 @@
 ---
 title: "Wi-Fi Features"
-description: "Wi-Fi operations available in the Flipper Zero companion app."
+description: "Wi-Fi operations available in the Flipper Zero companion app"
 weight: 30
 keywords: ["wifi", "scanning", "capture", "attacks", "beacon spam"]
 ---
@@ -55,19 +55,19 @@ keywords: ["wifi", "scanning", "capture", "attacks", "beacon spam"]
 - **Smart Plug Control**: Control TP-Link smart plugs
 - **WebUI Credentials**: Configure WebUI authentication
 
-> **Note**: The Aerial Detector submenu is under the **Wi-Fi** category in the Flipper UI (not BLE). On-device displays keep it under BLE.
+> **Note:** The Aerial Detector submenu is under the **Wi-Fi** category in the Flipper UI (not BLE). On-device displays keep it under BLE.
 
 ## Custom Portal HTML
 
 1. Create your HTML file (max 2048 bytes for app upload)
-2. Navigate to **WiFi** → **Evil Portal & Network** → **Set Evil Portal HTML**
+2. Navigate to **Wi-Fi** → **Evil Portal & Network** → **Set Evil Portal HTML**
 3. Select upload method
 4. Enter HTML content or select file
 5. Portal will use custom HTML on next start
 
 ## Beacon List Management
 
-1. Navigate to **WiFi** → **Attacks** → **Show Beacon List**
+1. Navigate to **Wi-Fi** → **Attacks** → **Show Beacon List**
 2. Choose action:
    - **Add**: Add new SSID to list
    - **Remove**: Remove SSID from list
