@@ -136,6 +136,9 @@ void handle_help(int argc, char **argv) {
         glog("connect\n");
         glog("    Description: Connects to Specific WiFi Network and saves credentials.\n");
         glog("    Usage: connect <SSID> [Password]\n\n");
+        glog("forgetwifi\n");
+        glog("    Description: Forget the saved WiFi network and disconnect from it\n");
+        glog("    Usage: forgetwifi\n\n");
         glog("autoreconnect\n");
         glog("    Description: Toggle WiFi station auto-reconnect after involuntary disconnects.\n");
         glog("    Usage: autoreconnect <on|off>\n");
@@ -398,6 +401,9 @@ void handle_help(int argc, char **argv) {
         glog("webauth\n");
         glog("    Description: Enable/disable web authentication.\n");
         glog("    Usage: webauth [on|off|toggle|status]\n\n");
+        glog("privacy\n");
+        glog("    Description: Redact Wi-Fi/BLE SSIDs and MAC addresses on screen.\n");
+        glog("    Usage: privacy [on|off|toggle|status]\n\n");
         glog("pineap\n");
         glog("    Description: Start/Stop detecting WiFi Pineapples.\n");
         glog("    Usage: pineap [-s]\n");
@@ -423,7 +429,12 @@ void handle_help(int argc, char **argv) {
         glog("scanarp\n");
         glog("    Description: Perform ARP scan on local network to discover active hosts\n");
         glog("    Usage: scanarp\n");
+        glog("           scanarp stop\n");
         glog("           scanarp monitor [duration-seconds]\n\n");
+        glog("scanlocal\n");
+        glog("    Description: Discover local hosts (ARP) and identify them via NetBIOS, mDNS, SSDP and ICMP\n");
+        glog("    Usage: scanlocal\n");
+        glog("           scanlocal stop\n\n");
         glog("scanssh\n");
         glog("    Description: Scan a host or local subnet for SSH services and grab banners\n");
         glog("    Usage: scanssh\n");

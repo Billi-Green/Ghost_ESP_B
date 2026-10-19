@@ -46,7 +46,10 @@ typedef struct {
 
 arp_scanner_ctx_t *arp_scanner_init(void);
 void arp_scanner_cleanup(arp_scanner_ctx_t *ctx);
+/** Blocking ARP scan with a printed/saved report. Fails if a scan is already running. */
 bool arp_scan_subnet(void);
+/** Blocking ARP scan; report=false skips the result table and SD file. */
+bool arp_scan_run_blocking(bool report);
 void arp_scan_print_results(void);
 bool send_arp_request(const char *target_ip);
 bool get_arp_table_entry(const char *ip, uint8_t *mac);

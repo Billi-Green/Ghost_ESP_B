@@ -4,6 +4,33 @@
 Untagged entries are by ([@jaylikesbunda](https://github.com/jaylikesbunda)). A trailing `@handle` credits a guest contributor for that specific line. "Ported from / adapted from" credits the upstream source a feature was based on, not GhostESP authorship.
 
 
+## v2.2.3
+
+### Added
+
+- Reworked `scanlocal` into a full local host scan: it finds hosts with ARP, then identifies each one by NetBIOS name, mDNS hostname, ICMP TTL and mDNS/SSDP services
+- Local scan results now show MAC, vendor, hostname, OS hint and services for each host
+- Added `scanarp stop` and `scanlocal stop`
+- Added `forgetwifi` command to clear the saved WiFi network and disconnect from it
+- Cloud Store now shows a clear "No internet. Connect GhostESP to WiFi" message when opened, refreshed or installing without a connection
+- BadBLE's Run Script list and `badble run`/`badble list` now also find scripts in `/mnt/ghostesp/badusb/`, not just `/mnt/ghostesp/badble/`
+- Renamed the "mDNS Discovery" menu entry to "Local Scan" and added "List Local Scan" to reopen the last results without rescanning
+- Add support for [XIAO ESP32S3 & Wio-SX1262 Kit](https://wiki.seeedstudio.com/wio_sx1262_with_xiao_esp32s3_kit/) - @antonionardella (#428)
+
+### Changed
+- Sentry now detects Google Nest cameras and doorbells over BLE and over WiFi - pre2
+- Sentry rows now show how long ago each device was last seen - pre2
+
+### Fixed
+- Fixed `scanarp` over the CLI immediately printing "ARP scan cancelled" and scanning nothing
+- Fixed `scanlocal` finding nothing when the web/AP services weren't running
+- Fixed cancelling the local scan from the UI not actually stopping it
+- Fixed slide-to-unlock not responding when the lockscreen appeared over a view like Sentry
+- Fixed Sentry detection popups showing above the lockscreen
+- Fixed touch drag scrolling in the Sentry list and detail views
+- Fixed touch scrolling and the Back row not working in the Local Scan host detail view
+- Fixed CrowPanel Advance 4.3" V1.1 backlight initialization - @patlaluci-prog (#432)
+
 ## v2.2.2
 
 ### Added
@@ -11,6 +38,7 @@ Untagged entries are by ([@jaylikesbunda](https://github.com/jaylikesbunda)). A 
 - Added NEW Sentry view that fuses the Flock camera detector, BLE device-detect and NEW WiFi camera/ALPR/Ring/Axon detectors
 - BLE device detect scan now recognises Meta glasses and Google Find My tags
 - Added slide-to-unlock for the no-PIN lockscreen on touchscreen devices and enabled it by default
+- Added Privacy Mode which redacts third-party SSIDs, MAC addresses, BLE device names, LAN hostnames, GPS coordinates and LoRa/Mesh node identities
 
 ### Fixed
 
@@ -23,6 +51,8 @@ Untagged entries are by ([@jaylikesbunda](https://github.com/jaylikesbunda)). A 
 - Setup wizard lists now scroll with touch drag like the other native views
 - Fixed the DNS sinkhole blocklist picker duplicating or skipping entries across pages when `stats.txt` was present (it now pages over the visible list)
 - Fixed the shell command registry running out of slots, which silently dropped the newest commands on the largest board configs
+- Fixed Poltergeist IR transmission from the ESP
+- Fixed long inline IR payloads being truncated by the serial line buffer, which corrupted the transmitted signal
 
 ## v2.2.1
 

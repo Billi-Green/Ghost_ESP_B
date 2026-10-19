@@ -9,6 +9,7 @@
 #include "managers/status_display_manager.h"
 #include "managers/wifi_manager.h"
 #include "scans/wifi/hop_profile.h"
+#include "scans/wifi/local_scan.h"
 #include "scans/wifi/wifi_channels.h"
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(GHOSTESP_NO_NATIVE_BLE)
 #include "managers/ble_manager.h"
@@ -542,6 +543,34 @@ void handle_wifi_disconnect(int argc, char **argv) {
     }
 }
 
+void handle_wifi_forget(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    const char *saved_ssid = settings_get_sta_ssid(&G_Settings);
+    if (saved_ssid == NULL || saved_ssid[0] == '\0') {
+        glog("No saved WiFi network.\n");
+        return;
+    }
+
+    char forgotten[sizeof(G_Settings.sta_ssid)];
+    strlcpy(forgotten, saved_ssid, sizeof(forgotten));
+
+    // Stop auto-reconnect first, or the drop below would just rejoin it.
+    wifi_manager_stop_reconnect();
+    wifi_manager_set_manual_disconnect(true);
+    wifi_ap_record_t ap_info;
+    if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
+        esp_wifi_disconnect();
+    }
+
+    settings_set_sta_ssid(&G_Settings, "");
+    settings_set_sta_password(&G_Settings, "");
+    settings_save_sta_credentials(&G_Settings);
+
+    glog("Forgot saved WiFi network: %s\n", forgotten);
+    status_display_show_status("WiFi Forgotten");
+}
+
 void handle_wifi_status(int argc, char **argv) {
     (void)argc;
     (void)argv;
@@ -578,11 +607,29 @@ void handle_wifi_status(int argc, char **argv) {
 }
 
 void handle_ip_lookup(int argc, char **argv) {
-    (void)argc;
-    (void)argv;
-    glog("Starting IP lookup...\n");
-    wifi_manager_start_ip_lookup();
-    status_display_show_status("IP Lookup");
+    if (argc >= 2 && strcmp(argv[1], "stop") == 0) {
+        if (!local_scan_is_running()) {
+            glog("Local scan is not running.\n");
+            return;
+        }
+        local_scan_cancel();
+        status_display_show_status("Local Stop");
+        return;
+    }
+
+    glog("Starting local network scan...\n");
+    esp_err_t err = local_scan_start_async();
+    if (err == ESP_ERR_INVALID_STATE) {
+        glog("A local scan is already running. Use 'scanlocal stop' to cancel it.\n");
+        status_display_show_status("Local Busy");
+        return;
+    }
+    if (err != ESP_OK) {
+        glog("Error: Could not start local scan.\n");
+        status_display_show_status("Local Failed");
+        return;
+    }
+    status_display_show_status("Local Scan");
 }
 
 void handle_wifi_autoreconnect_cmd(int argc, char **argv) {

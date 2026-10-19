@@ -183,7 +183,7 @@ Available on boards with `CONFIG_HAS_BADBLE`.
 Bluetooth HID keyboard mode (DuckyScript over BLE). BadBLE owns the BLE radio while active - stop it before using BLE scans or the bridge.
 
 - **`badble status`** - Show BadBLE state (advertising / connected / script), advertised name, and host status.
-- **`badble list`** - List DuckyScripts in `/mnt/ghostesp/badble/`.
+- **`badble list`** - List DuckyScripts in `/mnt/ghostesp/badble/` and `/mnt/ghostesp/badusb/`.
 - **`badble run <file>`** - Wait for a paired host and run a DuckyScript. `badble run "Ghost Art (Built-in)"` runs the built-in payload without an SD card.
 - **`badble stop`** - Stop BadBLE; Wi-Fi/AP are restored.
 - **`badble keyboard_start`** / **`keyboard_stop`** - Enable / disable live typing mode.

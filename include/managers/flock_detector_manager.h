@@ -25,6 +25,7 @@ typedef enum {
     FLOCK_DETECT_OUI_ADDR3 = 2,
     FLOCK_DETECT_SSID      = 3,
     FLOCK_DETECT_WILDCARD_PROBE = 4,
+    FLOCK_DETECT_STREAM    = 5,   // Google-OUI MAC with a sustained video-style uplink
 } FlockDetectMethod;
 
 typedef enum {
@@ -42,6 +43,7 @@ typedef enum {
     FLOCK_CLASS_RING,
     FLOCK_CLASS_AXON,
     FLOCK_CLASS_HAK5,
+    FLOCK_CLASS_NEST,
 } FlockDeviceClass;
 
 typedef struct {
@@ -69,6 +71,15 @@ bool flock_detector_is_running(void);
 int flock_detector_get_count(void);
 const FlockDetection* flock_detector_get_detection(int index);
 void flock_detector_clear_detections(void);
+
+// True for Flock Safety hits (and unclassified ones). Other vendor classes the
+// detector also collects for sentry (Ring, Nest, cameras, ALPR, Axon, Hak5) are
+// false, so Flock-only views (flocklist, flockscan output) can skip them.
+bool flock_detector_is_flock(const FlockDetection *det);
+
+// Sentry sets this so vendor hits are logged too. Off by default: the
+// standalone flock scan reports Flock devices only.
+void flock_detector_set_show_all(bool show_all);
 
 void flock_detector_set_callback(FlockDetectorCallback cb, void *user_data);
 

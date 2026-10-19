@@ -257,6 +257,25 @@ static esp_err_t crowpanel_advance_small_factory_reset(void) {
 #define CROWPANEL_ADVANCE43_FACTORY_OUTPUT_MASK 0x1e /* P1..P4 */
 #define CROWPANEL_ADVANCE43_RESET_BIT           0x04 /* TCA9534 P2 */
 
+/* V1.1 backlight compatibility: older CrowPanel boards accept a single-byte
+ * brightness command (0x10 = on) at I2C address 0x30. This is an additional
+ * best-effort write; keep the factory TCA9534 sequence for other revisions. */
+#define CROWPANEL_ADVANCE43_V11_BL_ADDR       0x30
+#define CROWPANEL_ADVANCE43_V11_BL_ON         0x10
+
+static void crowpanel_advance43_v11_backlight_on(void) {
+    uint8_t command = CROWPANEL_ADVANCE43_V11_BL_ON;
+    esp_err_t err = lvgl_i2c_write(CONFIG_LV_I2C_TOUCH_PORT,
+                                   CROWPANEL_ADVANCE43_V11_BL_ADDR,
+                                   I2C_NO_REG, &command, 1);
+    if (err == ESP_OK) {
+        ESP_LOGI("DisplayManager", "CrowPanel Advance 4.3 V1.1 backlight ON (0x30 <- 0x10)");
+    } else {
+        ESP_LOGW("DisplayManager", "CrowPanel Advance 4.3 V1.1 backlight command not acknowledged: %s",
+                 esp_err_to_name(err));
+    }
+}
+
 static esp_err_t crowpanel_advance43_tca9534_read(uint8_t reg, uint8_t *value) {
     return lvgl_i2c_read(CONFIG_LV_I2C_TOUCH_PORT,
                          CROWPANEL_ADVANCE43_TCA9534_ADDR,
@@ -903,9 +922,25 @@ static const tdeck_soc_point_t s_tdeck_soc_table[TDECK_SOC_TABLE_SIZE] = {
     {3900, 70},
     {4000, 82},
     {4100, 92},
-    {4200, 98},
-    {4300, 100},
+    {4150, 96},
+    {4200, 100},
 };
+
+// No charger-status pin is routed to the MCU (LilyGo reference only exposes
+// BOARD_BAT_ADC=GPIO4 behind a 1/2 divider), so charging is inferred from the
+// time-based voltage trend. Sample sparsely and average so noise doesn't flip it.
+#define TDECK_SAMPLE_PERIOD_MS   2000
+#define TDECK_TREND_PERIOD_MS    8000
+#define TDECK_TREND_HISTORY      12      // ~96 s window
+#define TDECK_TREND_MV           10
+#define TDECK_ADC_OVERSAMPLE     16
+#define TDECK_CHARGE_OFFSET_MV   90      // terminal-voltage rise while charger is active
+static int s_tdeck_trend[TDECK_TREND_HISTORY];
+static int s_tdeck_trend_count = 0;
+static int s_tdeck_trend_head = 0;
+static int64_t s_tdeck_last_sample_ms = 0;
+static int64_t s_tdeck_last_trend_ms = 0;
+static int s_tdeck_last_result = -1;
 
 static uint8_t tdeck_voltage_to_percent(int mv) {
     if (mv <= s_tdeck_soc_table[0].mv) {
@@ -951,6 +986,15 @@ int getBattery() {
     static adc_oneshot_unit_handle_t handle = NULL;
     static adc_cali_handle_t cali_handle = NULL;
 
+#ifdef CONFIG_USE_TDECK
+    // Status redraws call this at an arbitrary rate; keep the filters time-based.
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    if (s_tdeck_last_result >= 0 && (now_ms - s_tdeck_last_sample_ms) < TDECK_SAMPLE_PERIOD_MS) {
+        return s_tdeck_last_result;
+    }
+    s_tdeck_last_sample_ms = now_ms;
+#endif
+
     if (!init_done) {
         const adc_oneshot_unit_init_cfg_t init_config = {
             .unit_id = _batAdcUnit,
@@ -977,7 +1021,19 @@ int getBattery() {
 
     // raw ADC → calibrated millivolt
     int raw = 0;
-    esp_err_t ret = adc_oneshot_read(handle, _batAdcCh, &raw);
+    esp_err_t ret = ESP_OK;
+#ifdef CONFIG_USE_TDECK
+    int raw_sum = 0;
+    for (int i = 0; i < TDECK_ADC_OVERSAMPLE; i++) {
+        int r = 0;
+        ret = adc_oneshot_read(handle, _batAdcCh, &r);
+        if (ret != ESP_OK) break;
+        raw_sum += r;
+    }
+    raw = raw_sum / TDECK_ADC_OVERSAMPLE;
+#else
+    ret = adc_oneshot_read(handle, _batAdcCh, &raw);
+#endif
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "ADC read failed: %s", esp_err_to_name(ret));
         return -1;
@@ -1027,20 +1083,29 @@ int getBattery() {
         }
     }
 #elif CONFIG_USE_TDECK
-    // T-Deck: use rolling window like Cardputer for stable charging detection
-    s_charge_samples[s_charge_sample_idx] = mv;
-    s_charge_sample_idx = (s_charge_sample_idx + 1) % 5;
-    if (s_charge_sample_idx == 0) s_charge_samples_filled = true;
-    
-    if (s_charge_samples_filled) {
-        int oldest_mv = s_charge_samples[s_charge_sample_idx];
-        int trend = mv - oldest_mv;
-        
-        // Use higher threshold for T-Deck to avoid false charging detection
-        if (trend > (CHARGE_THRESH_MV * 2)) {
+    // T-Deck: compare the smoothed voltage against ~96 s ago (time-based, so
+    // redraw rate doesn't matter). Plug-in shows as a step up, unplug as a step
+    // down, and the CC phase as a slow steady climb; plateaus keep prior state.
+    {
+        int smoothed = (s_filtered_mv < 0) ? mv : (s_filtered_mv * 6 + mv * 2) / 8;
+        if (s_tdeck_trend_count == 0 || (now_ms - s_tdeck_last_trend_ms) >= TDECK_TREND_PERIOD_MS) {
+            s_tdeck_last_trend_ms = now_ms;
+            if (s_tdeck_trend_count == TDECK_TREND_HISTORY) {
+                int oldest = s_tdeck_trend[s_tdeck_trend_head];
+                int trend = smoothed - oldest;
+                if (trend >= TDECK_TREND_MV) {
+                    _isCharging = true;
+                } else if (trend <= -TDECK_TREND_MV) {
+                    _isCharging = false;
+                }
+            }
+            s_tdeck_trend[s_tdeck_trend_head] = smoothed;
+            s_tdeck_trend_head = (s_tdeck_trend_head + 1) % TDECK_TREND_HISTORY;
+            if (s_tdeck_trend_count < TDECK_TREND_HISTORY) s_tdeck_trend_count++;
+        }
+        // Resting Li-ion never exceeds ~4.2 V; anything above is charger-driven.
+        if (smoothed >= 4230) {
             _isCharging = true;
-        } else if (trend < -(CHARGE_THRESH_MV * 2)) {
-            _isCharging = false;
         }
     }
 #else
@@ -1080,6 +1145,11 @@ int getBattery() {
         s_filtered_mv = (s_filtered_mv * 6 + mv * 2) / 8;
     }
     mv_for_percent = s_filtered_mv;
+    // Charger lifts terminal voltage above the open-circuit value; compensate
+    // so plugging in doesn't jump the percentage.
+    if (_isCharging && mv_for_percent < 4150) {
+        mv_for_percent -= TDECK_CHARGE_OFFSET_MV;
+    }
 #endif
 
     // Map measured voltage to a percentage
@@ -1119,17 +1189,20 @@ int getBattery() {
     if (s_display_percent < 0) {
         s_display_percent = percent;
     } else {
+        // Percentage only moves in the direction the charge state allows;
+        // one point per ~2 s sample.
         int diff = percent - s_display_percent;
-        int threshold = _isCharging ? 5 : 3;
-        if (diff >= threshold) {
-            s_display_percent++;
-        } else if (diff <= -threshold) {
-            s_display_percent--;
+        if (_isCharging) {
+            if (diff >= 1) s_display_percent++;
+        } else {
+            if (diff <= -1) s_display_percent--;
+            else if (diff >= 4) s_display_percent++;  // genuine recovery after load sag
         }
         if (s_display_percent < 0) s_display_percent = 0;
         if (s_display_percent > 100) s_display_percent = 100;
     }
     percent = (uint8_t)s_display_percent;
+    s_tdeck_last_result = percent;
 #endif
 
     ESP_LOGD(TAG, "Battery percentage: %d%%", percent);
@@ -2216,6 +2289,8 @@ ESP_LOGI(TAG, "T-Deck trackball ISRs registered");
 #ifdef CONFIG_CROWPANEL_ADVANCE_43_LCD
   else {
     crowpanel_advance43_factory_power_sequence();
+    /* V1.1 needs an explicit backlight-on command after the power sequence. */
+    crowpanel_advance43_v11_backlight_on();
   }
 #else
   else if (crowpanel_advance_stc8_prepare() == ESP_OK) {
@@ -4116,6 +4191,7 @@ static bool touch_move_events_enabled_for_view_name(const char *view_name) {
           strcmp(view_name, "LoRa") == 0 ||
           strcmp(view_name, "Ethernet") == 0 ||
           strcmp(view_name, "AirspaceMonitorView") == 0 ||
+          strcmp(view_name, "SentryView") == 0 ||
           strcmp(view_name, "Audio Player") == 0 ||
           strcmp(view_name, "Camera") == 0 ||
           strcmp(view_name, "Main Menu") == 0 ||
@@ -4136,6 +4212,10 @@ static bool touch_move_events_enabled_for_view_name(const char *view_name) {
 }
 
 static bool touch_move_events_enabled_for_current_view(void) {
+  /* The lockscreen overlay leaves the underlying view as dm.current_view, but
+   * input belongs to the lockscreen: its slide-to-unlock needs drag samples
+   * whatever view is underneath. */
+  if (s_lockscreen_overlay_active) return true;
   if (!dm.mutex) return false;
 
   bool enabled = false;

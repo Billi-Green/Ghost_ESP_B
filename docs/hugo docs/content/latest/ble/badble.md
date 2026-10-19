@@ -22,7 +22,7 @@ ESP32-S2 is not supported (no Bluetooth radio).
 
 Open **BadBLE** from the main menu on the device:
 
-- **Run Script** - pick a payload from `/mnt/ghostesp/badble/` (or the built-in *Ghost Art* script, which needs no SD card). The device advertises and waits; once a host pairs, the popup flips from "Waiting" to "Running" and the script plays out. **Cancel** (tap anywhere, or confirm/back on joystick, Enter/Esc on keyboard, encoder press) stops it.
+- **Run Script** - pick a payload from `/mnt/ghostesp/badble/` or `/mnt/ghostesp/badusb/` (or the built-in *Ghost Art* script, which needs no SD card). The device advertises and waits; once a host pairs, the popup flips from "Waiting" to "Running" and the script plays out. **Cancel** (tap anywhere, or confirm/back on joystick, Enter/Esc on keyboard, encoder press) stops it.
 - **BLE Keyboard** - live typing screen. Every key is forwarded to the paired host as you press it; exiting the screen stops BadBLE.
 - **Set Name** - change the advertised name (saved to NVS).
 - **Status** - current state, advertised name, and whether a host is connected.
@@ -41,7 +41,8 @@ The same feature is available from the CLI and the WebUI (BLE page → BadBLE ta
 
 ## Script Files
 
-- Place scripts in `/mnt/ghostesp/badble/`
+- Place scripts in `/mnt/ghostesp/badble/` or `/mnt/ghostesp/badusb/` - the same DuckyScript files BadUSB uses also run over BadBLE
+- `badble/` is checked first; a name present in both folders resolves to the `badble/` copy
 - File extension: `.txt` (only `.txt` files are listed)
 - Size limit: 64 KB per script
 - The built-in *Ghost Art* script always appears first in the picker and runs without an SD card

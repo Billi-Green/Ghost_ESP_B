@@ -59,6 +59,7 @@
 #include "scans/ble/gatt_scan.h"
 #include "scans/wifi/station_scan.h"
 #include "scans/wifi/arp_scan.h"
+#include "scans/wifi/local_scan.h"
 #include "scans/wifi/govee_scan.h"
 #include "scans/wifi/enum4linux_scan.h"
 #include "core/commands.h"
@@ -1518,7 +1519,7 @@ static const char * const wifi_environment_options[] = {
 };
 
 static const char * const wifi_network_options[] = {
-    "mDNS Discovery", "ARP Sweep", "List Hosts (ARP)", "Scan Open Ports", "SSH Banner Scan",
+    "Local Scan", "List Local Scan", "ARP Sweep", "List Hosts (ARP)", "Scan Open Ports", "SSH Banner Scan",
     "NetBIOS Scan", "HTTP Banner Scan", "SNMP Probe",
     "SMB Enum (enum4linux)", "SNMP Walk",
     "NetBIOS Subnet...", "HTTP Banner Subnet...", "SNMP Probe Subnet...", "SNMP Walk Subnet...",
@@ -1623,7 +1624,7 @@ static const char * const dual_comm_scan_options[] = {
     "Scan Stations",
     "Scan AP + STA",
     "Sweep",
-    "mDNS Discovery",
+    "Local Scan",
     "ARP Scan Network",
     "Scan Open Ports",
     "Scan SSH",
@@ -1911,6 +1912,7 @@ static SettingsItem settings_items[] = {
     {"Auto Flip", SETTING_AUTO_FLIP, bool_options, 2, 0, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_TOGGLE},
 #endif
     {"Sun Mode", SETTING_SUN_MODE, bool_options, 2, 0, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_TOGGLE},
+    {"Privacy Mode", SETTING_PRIVACY_MODE, bool_options, 2, 0, SETTINGS_CAT_DISPLAY, false, NULL, SETTING_WIDGET_TOGGLE},
     {"Log Level", SETTING_LOG_LEVEL, log_level_options, 6, ESP_LOG_WARN, SETTINGS_CAT_LOGGING, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
     {"Open Without PIN", SETTING_FAVORITES_BYPASS, bool_options, 2, 0, SETTINGS_CAT_FAVORITES, false, NULL, SETTING_WIDGET_TOGGLE},
     {"Manage Favorites", SETTING_MANAGE_FAVORITES, action_options, 1, 0, SETTINGS_CAT_FAVORITES, false, NULL, SETTING_WIDGET_VALUE_CYCLE},
@@ -2630,7 +2632,7 @@ static int arp_list_load_fn(int offset, int page_size, char names[][PAGED_MENU_N
         if (host) {
             char mac_str[18];
             char vendor[64] = {0};
-            format_mac_address(host->mac, mac_str, sizeof(mac_str), true);
+            format_mac_address_masked(host->mac, mac_str, sizeof(mac_str), true);
             ouis_lookup_vendor(mac_str, vendor, sizeof(vendor));
             snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s  %s",
                      host->ip, vendor[0] ? vendor : mac_str);
@@ -2709,7 +2711,7 @@ static void show_arp_detail(int index) {
     reserve_detail_touch_bar_space(arp_detail_view);
 
     char mac_str[18];
-    format_mac_address(host->mac, mac_str, sizeof(mac_str), true);
+    format_mac_address_masked(host->mac, mac_str, sizeof(mac_str), true);
 
     detail_view_add_info(arp_detail_view, "IP", host->ip);
     detail_view_add_info(arp_detail_view, "MAC", mac_str);
@@ -2924,7 +2926,11 @@ static void show_govee_detail(int index) {
     reserve_detail_touch_bar_space(govee_detail_view);
     detail_view_add_info(govee_detail_view, "Model", device->sku[0] ? device->sku : "Unknown");
     detail_view_add_info(govee_detail_view, "IP", device->ip);
-    if (device->device[0]) detail_view_add_info(govee_detail_view, "Device", device->device);
+    if (device->device[0]) {
+        char device_disp[64];
+        privacy_redact_text_copy(device->device, device_disp, sizeof(device_disp));
+        detail_view_add_info(govee_detail_view, "Device", device_disp);
+    }
     if (device->version[0]) detail_view_add_info(govee_detail_view, "Firmware", device->version);
     if (!use_compact_wifi_detail_layout()) detail_view_add_info(govee_detail_view, "Actions:", "");
     detail_view_add_action(govee_detail_view, "Turn On", govee_detail_action_cb, (void *)(intptr_t)0);
@@ -3020,22 +3026,37 @@ static void mdns_list_cleanup(void) {
         detail_view_destroy(mdns_detail_view);
         mdns_detail_view = NULL;
     }
-    wifi_manager_ip_lookup_clear();
+    // Results stay in memory (like the ARP list) so "List Local Scan" can
+    // reopen them; the next scan replaces them.
 }
 
 static int mdns_list_load_fn(int offset, int page_size, char names[][PAGED_MENU_NAME_MAX],
                               bool *has_more, void *user_data) {
     (void)user_data;
-    int count = wifi_manager_ip_lookup_get_count();
+    int count = local_scan_get_count();
     if (count <= 0) {
         *has_more = false;
         return 0;
     }
     int loaded = 0;
     for (int i = offset; i < count && loaded < page_size; i++) {
-        const mdns_device_t *dev = wifi_manager_ip_lookup_get_device(i);
+        const local_host_t *dev = local_scan_get_host(i);
         if (dev) {
-            snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s  %s", dev->hostname[0] ? dev->hostname : dev->ip, dev->ip);
+            char ip[16];
+            local_scan_ip_str(dev, ip, sizeof(ip));
+            if (dev->name[0]) {
+                char name_disp[64];
+                privacy_redact_text_copy(dev->name, name_disp, sizeof(name_disp));
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s  %s", name_disp, ip);
+            } else {
+                // No hostname found: show the MAC vendor instead, like the ARP list
+                char mac_str[18] = "";
+                char vendor[64] = {0};
+                format_mac_address_masked(dev->mac, mac_str, sizeof(mac_str), true);
+                ouis_lookup_vendor(mac_str, vendor, sizeof(vendor));
+                snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s  %s", ip,
+                         vendor[0] ? vendor : mac_str);
+            }
             loaded++;
         }
     }
@@ -3061,7 +3082,7 @@ static void mdns_detail_back_cb(lv_event_t *e) {
 }
 
 static void show_mdns_detail(int index) {
-    const mdns_device_t *dev = wifi_manager_ip_lookup_get_device(index);
+    const local_host_t *dev = local_scan_get_host(index);
     if (!dev) {
         error_popup_create("Device not found");
         return;
@@ -3071,20 +3092,42 @@ static void show_mdns_detail(int index) {
     if (mdns_detail_view) {
         detail_view_destroy(mdns_detail_view);
     }
-    mdns_detail_view = detail_view_create(lv_scr_act(), "mDNS Device");
+    mdns_detail_view = detail_view_create(lv_scr_act(), "Local Host");
     reserve_detail_touch_bar_space(mdns_detail_view);
 
-    if (dev->hostname[0]) {
-        detail_view_add_info(mdns_detail_view, "Hostname", dev->hostname);
+    if (dev->name[0]) {
+        char name_disp[64];
+        privacy_redact_text_copy(dev->name, name_disp, sizeof(name_disp));
+        detail_view_add_info(mdns_detail_view, "Name", name_disp);
     }
-    detail_view_add_info(mdns_detail_view, "IP", dev->ip);
-    if (dev->port > 0) {
-        char port_str[8];
-        snprintf(port_str, sizeof(port_str), "%u", dev->port);
-        detail_view_add_info(mdns_detail_view, "Port", port_str);
+    char ip[16];
+    local_scan_ip_str(dev, ip, sizeof(ip));
+    detail_view_add_info(mdns_detail_view, "IP", ip);
+
+    bool has_mac = false;
+    for (int i = 0; i < 6; i++) {
+        if (dev->mac[i]) has_mac = true;
     }
-    if (dev->service_type[0]) {
-        detail_view_add_info(mdns_detail_view, "Service", dev->service_type);
+    if (has_mac) {
+        char mac_str[18];
+        char vendor[64] = {0};
+        format_mac_address_masked(dev->mac, mac_str, sizeof(mac_str), true);
+        detail_view_add_info(mdns_detail_view, "MAC", mac_str);
+        ouis_lookup_vendor(mac_str, vendor, sizeof(vendor));
+        if (vendor[0]) {
+            detail_view_add_info(mdns_detail_view, "Vendor", vendor);
+        }
+    }
+    const char *os_hint = local_scan_os_hint(dev->ttl);
+    if (os_hint) {
+        char ttl_str[40];
+        snprintf(ttl_str, sizeof(ttl_str), "%u (%s)", dev->ttl, os_hint);
+        detail_view_add_info(mdns_detail_view, "TTL", ttl_str);
+    }
+    char svc[96];
+    local_scan_services_str(dev->services, svc, sizeof(svc));
+    if (svc[0]) {
+        detail_view_add_info(mdns_detail_view, "Services", svc);
     }
 
     detail_view_add_back(mdns_detail_view, mdns_detail_back_cb, NULL);
@@ -3096,7 +3139,7 @@ static void mdns_scan_complete_callback(void) {
         scan_status_close(mdns_scan_status);
         mdns_scan_status = NULL;
     }
-    int count = wifi_manager_ip_lookup_get_count();
+    int count = local_scan_get_count();
     if (count == 0) {
         error_popup_create("No devices found");
         current_wifi_menu_state = WIFI_MENU_NETWORK;
@@ -3112,16 +3155,26 @@ static void mdns_scan_complete_callback(void) {
 
 static void mdns_scan_poll_timer_cb(lv_timer_t *timer) {
     (void)timer;
-    if (wifi_manager_ip_lookup_check_done()) {
+    if (local_scan_check_done()) {
         lv_timer_del(mdns_scan_poll_timer);
         mdns_scan_poll_timer = NULL;
-        wifi_manager_ip_lookup_finish_async();
+        local_scan_finish_async();
         if (mdns_scan_cancel_requested) {
             mdns_scan_cancel_requested = false;
-            wifi_manager_ip_lookup_clear();
+            local_scan_clear_results();
             return;
         }
         mdns_scan_complete_callback();
+        return;
+    }
+    // Live progress: current phase and hosts found so far
+    const char *phase = NULL;
+    int found = 0;
+    local_scan_get_status(&phase, &found);
+    if (phase && mdns_scan_status) {
+        char buf[48];
+        snprintf(buf, sizeof(buf), "%s  %d found", phase, found);
+        scan_status_set_subtext(mdns_scan_status, buf);
     }
 }
 
@@ -3140,18 +3193,19 @@ static void mdns_scan_cancel_cb(void) {
     if (mdns_scan_cancel_requested) return;
     mdns_scan_cancel_requested = true;
     option_input_blocked_until_us = esp_timer_get_time() + 500000;
+    local_scan_cancel();
     lv_async_call(mdns_scan_cancel_cleanup, NULL);
 }
 
 static bool start_mdns_scan_flow(void) {
     mdns_list_cleanup();
     mdns_scan_cancel_requested = false;
-    mdns_scan_status = scan_status_create("mDNS Discovery");
+    mdns_scan_status = scan_status_create("Local Scan");
     if (mdns_scan_status) {
         scan_status_set_subtext(mdns_scan_status, "Tap to cancel");
         scan_status_set_cancel_cb(mdns_scan_status, mdns_scan_cancel_cb);
     }
-    esp_err_t err = wifi_manager_start_ip_lookup_async();
+    esp_err_t err = local_scan_start_async();
     if (err != ESP_OK) {
         if (mdns_scan_status) {
             scan_status_close(mdns_scan_status);
@@ -3196,8 +3250,14 @@ static int enum_list_load_fn(int offset, int page_size, char names[][PAGED_MENU_
     for (int i = offset; i < count && loaded < page_size; i++) {
         const enum_host_t *host = enum_scan_get_host(i);
         if (host) {
+            char hostname_disp[64];
+            const char *host_label = "SMB";
+            if (host->hostname[0]) {
+                privacy_redact_text_copy(host->hostname, hostname_disp, sizeof(hostname_disp));
+                host_label = hostname_disp;
+            }
             snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s  %s",
-                     host->ip, host->hostname[0] ? host->hostname : "SMB");
+                     host->ip, host_label);
             loaded++;
         }
     }
@@ -3237,17 +3297,28 @@ static void show_enum_detail(int index) {
     reserve_detail_touch_bar_space(enum_detail_view);
 
     detail_view_add_info(enum_detail_view, "IP", host->ip);
-    if (host->hostname[0])
-        detail_view_add_info(enum_detail_view, "Hostname", host->hostname);
-    if (host->os_version[0])
-        detail_view_add_info(enum_detail_view, "OS", host->os_version);
-    if (host->domain[0])
-        detail_view_add_info(enum_detail_view, "Domain", host->domain);
+    if (host->hostname[0]) {
+        char hostname_disp[64];
+        privacy_redact_text_copy(host->hostname, hostname_disp, sizeof(hostname_disp));
+        detail_view_add_info(enum_detail_view, "Hostname", hostname_disp);
+    }
+    if (host->os_version[0]) {
+        char os_disp[64];
+        privacy_redact_text_copy(host->os_version, os_disp, sizeof(os_disp));
+        detail_view_add_info(enum_detail_view, "OS", os_disp);
+    }
+    if (host->domain[0]) {
+        char domain_disp[64];
+        privacy_redact_text_copy(host->domain, domain_disp, sizeof(domain_disp));
+        detail_view_add_info(enum_detail_view, "Domain", domain_disp);
+    }
 
     if (host->share_count > 0) {
         detail_view_add_header(enum_detail_view, "Shares");
         for (int i = 0; i < host->share_count; i++) {
-            detail_view_add_info(enum_detail_view, host->shares[i].name,
+            char share_name_disp[32];
+            privacy_redact_text_copy(host->shares[i].name, share_name_disp, sizeof(share_name_disp));
+            detail_view_add_info(enum_detail_view, share_name_disp,
                                  host->shares[i].type);
         }
     }
@@ -3261,6 +3332,7 @@ static void show_enum_detail(int index) {
                              "%s%s", i > 0 ? ", " : "", host->users[i]);
             if (w > 0) pos += (size_t)w;
         }
+        privacy_redact_text(user_list);
         detail_view_add_info(enum_detail_view, "Users", user_list);
     }
 
@@ -3593,6 +3665,9 @@ static void update_scroll_buttons_visibility(void) {
         force_show = true;
     } else if (arp_detail_view && current_wifi_menu_state == WIFI_MENU_ARP_DETAILS) {
         target = detail_view_get_list(arp_detail_view);
+        force_show = true;
+    } else if (mdns_detail_view && current_wifi_menu_state == WIFI_MENU_MDNS_DETAILS) {
+        target = detail_view_get_list(mdns_detail_view);
         force_show = true;
     } else if (ble_detect_detail_view && current_bluetooth_menu_state == BLUETOOTH_MENU_DETECT_DETAILS) {
         target = detail_view_get_list(ble_detect_detail_view);
@@ -4485,6 +4560,9 @@ static void load_current_settings_values(void) {
             case SETTING_SUN_MODE:
                 settings_items[i].current_value = settings_get_sun_mode(&G_Settings) ? 1 : 0;
                 break;
+            case SETTING_PRIVACY_MODE:
+                settings_items[i].current_value = settings_get_privacy_mode(&G_Settings) ? 1 : 0;
+                break;
             case SETTING_LOG_LEVEL:
                 settings_items[i].current_value = settings_get_log_level(&G_Settings);
                 break;
@@ -4864,6 +4942,9 @@ static void apply_setting_change(int setting_index, int new_value) {
             }
             break;
         }
+        case SETTING_PRIVACY_MODE:
+            settings_set_privacy_mode(&G_Settings, new_value == 1);
+            break;
         case SETTING_LOG_LEVEL:
             settings_set_log_level(&G_Settings, (uint8_t)new_value);
             esp_log_level_set("*", (esp_log_level_t)new_value);
@@ -6162,6 +6243,8 @@ void handle_hardware_button_press_options(InputEvent *event) {
                         active_detail_view = sta_detail_view;
                     } else if (arp_detail_view && opt_touch_wifi_state == WIFI_MENU_ARP_DETAILS) {
                         active_detail_view = arp_detail_view;
+                    } else if (mdns_detail_view && opt_touch_wifi_state == WIFI_MENU_MDNS_DETAILS) {
+                        active_detail_view = mdns_detail_view;
                     } else if (ble_detect_detail_view &&
                                opt_touch_bluetooth_state == BLUETOOTH_MENU_DETECT_DETAILS) {
                         active_detail_view = ble_detect_detail_view;
@@ -6230,6 +6313,7 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 gtk_abuse_detail_view ||
                 (sta_detail_view && current_wifi_menu_state == WIFI_MENU_STA_DETAILS) ||
                 (arp_detail_view && current_wifi_menu_state == WIFI_MENU_ARP_DETAILS) ||
+                (mdns_detail_view && current_wifi_menu_state == WIFI_MENU_MDNS_DETAILS) ||
                 (ble_detect_detail_view &&
                  current_bluetooth_menu_state == BLUETOOTH_MENU_DETECT_DETAILS) ||
                 (ble_adv_detail_view &&
@@ -6280,6 +6364,8 @@ void handle_hardware_button_press_options(InputEvent *event) {
                 active_detail_view = sta_detail_view;
             } else if (arp_detail_view && opt_touch_wifi_state == WIFI_MENU_ARP_DETAILS) {
                 active_detail_view = arp_detail_view;
+            } else if (mdns_detail_view && opt_touch_wifi_state == WIFI_MENU_MDNS_DETAILS) {
+                active_detail_view = mdns_detail_view;
             } else if (ble_detect_detail_view &&
                        opt_touch_bluetooth_state == BLUETOOTH_MENU_DETECT_DETAILS) {
                 active_detail_view = ble_detect_detail_view;
@@ -7355,7 +7441,9 @@ static void gtk_abuse_poll_timer_cb(lv_timer_t *timer) {
     detail_view_t *dv = gtk_abuse_detail_view;
     bool compact_detail = use_compact_wifi_detail_layout();
 
-    detail_view_add_info(dv, "SSID", r->ssid);
+    char ssid_disp[33];
+    privacy_redact_ssid_copy(r->ssid, ssid_disp, sizeof(ssid_disp));
+    detail_view_add_info(dv, "SSID", ssid_disp);
     detail_view_add_info(dv, "Target", r->gateway_ip[0] ? r->gateway_ip : "-");
     detail_view_add_info(dv, "Valid",
                          !r->gtk_validation_available ? "N/A" :
@@ -7742,7 +7830,7 @@ void option_event_cb(lv_event_t *e) {
             display_manager_switch_view(&terminal_view);
             simulateCommand("commsend sweep");
             view_switched = true;
-        } else if (strcmp(Selected_Option, "mDNS Discovery") == 0) {
+        } else if (strcmp(Selected_Option, "Local Scan") == 0) {
             terminal_set_return_view(&options_menu_view);
             terminal_set_dualcomm_filter(true);
             display_manager_switch_view(&terminal_view);
@@ -9242,7 +9330,26 @@ void option_event_cb(lv_event_t *e) {
         view_switched = true;
     }
 
-    else if (strcmp(Selected_Option, "mDNS Discovery") == 0) {
+    else if (strcmp(Selected_Option, "Local Scan") == 0) {
+        if (!start_mdns_scan_flow()) {
+            error_popup_create("Scan failed to start");
+        }
+        option_invoked = false;
+        return;
+    }
+
+    else if (strcmp(Selected_Option, "List Local Scan") == 0) {
+        // Re-open the last results; only scan again when there are none.
+        if (local_scan_get_count() > 0) {
+            if (mdns_list_menu) {
+                paged_menu_reset(mdns_list_menu);
+            }
+            current_wifi_menu_state = WIFI_MENU_MDNS_LIST;
+            rebuild_current_menu();
+            option_invoked = false;
+            return;
+        }
+
         if (!start_mdns_scan_flow()) {
             error_popup_create("Scan failed to start");
         }
@@ -11068,6 +11175,7 @@ static int ap_multi_select_load_fn(int offset, int page_size, char names[][PAGED
         } else {
             char ssid_trunc[28] = {0};
             strncpy(ssid_trunc, (const char *)aps[i].ssid, sizeof(ssid_trunc) - 1);
+            privacy_redact_ssid(ssid_trunc);
             if (g_ap_multi_selected[i]) {
                 snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s %s# %s %s Ch:%d#",
                          accent_color_code, ssid_trunc, muted_color_code, band, aps[i].primary);
@@ -11243,6 +11351,7 @@ static int ap_list_load_fn(int offset, int page_size, char names[][PAGED_MENU_NA
         } else {
             char ssid_trunc[28] = {0};
             strncpy(ssid_trunc, (const char *)aps[i].ssid, sizeof(ssid_trunc) - 1);
+            privacy_redact_ssid(ssid_trunc);
             snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s %s %s Ch:%d#",
                      ssid_trunc, color_code, band, aps[i].primary);
         }
@@ -11383,6 +11492,7 @@ static int scanall_list_load_fn(int offset, int page_size, char names[][PAGED_ME
             strncpy(ssid, (const char *)aps[ap_index].ssid, sizeof(ssid) - 1);
         }
         sanitize_recolor_text(ssid);
+        privacy_redact_ssid(ssid);
 
         const char *band = (aps[ap_index].primary >= 36) ? "5G" : "2.4G";
 
@@ -11494,8 +11604,10 @@ static int ble_detect_list_load_fn(int offset, int page_size, char names[][PAGED
         char label[40];
         if (info.name[0] != '\0') {
             snprintf(label, sizeof(label), "%s", info.name);
+            privacy_redact_text(label);
         } else {
             snprintf(label, sizeof(label), "%02X:%02X:%02X", info.mac[3], info.mac[4], info.mac[5]);
+            privacy_redact_mac(label);
         }
 
         snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s%s | %.*s | %d dBm",
@@ -11596,9 +11708,11 @@ static void ble_detect_track_cb(lv_event_t *e) {
     if (ble_device_detect_get_device(selected_ble_detect_index, &info) == 0) {
         if (info.name[0] != '\0') {
             strncpy(target_label, info.name, sizeof(target_label) - 1);
+            privacy_redact_text(target_label);
         } else {
             snprintf(target_label, sizeof(target_label), "%02X:%02X:%02X:%02X:%02X:%02X",
                      info.mac[0], info.mac[1], info.mac[2], info.mac[3], info.mac[4], info.mac[5]);
+            privacy_redact_mac(target_label);
         }
     }
 
@@ -11676,13 +11790,16 @@ static void show_ble_detect_detail(int device_index) {
     char mac[18];
     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", info.mac[0], info.mac[1],
              info.mac[2], info.mac[3], info.mac[4], info.mac[5]);
+    privacy_redact_mac(mac);
 
     detail_view_add_info(ble_detect_detail_view, "Type", ble_device_detect_type_to_string(info.type));
     if (info.subtype[0] != '\0') {
         detail_view_add_info(ble_detect_detail_view, "Variant", info.subtype);
     }
     if (info.name[0] != '\0') {
-        detail_view_add_info(ble_detect_detail_view, "Name", info.name);
+        char name_disp[32];
+        privacy_redact_text_copy(info.name, name_disp, sizeof(name_disp));
+        detail_view_add_info(ble_detect_detail_view, "Name", name_disp);
     }
     detail_view_add_info(ble_detect_detail_view, "MAC", mac);
     detail_view_add_infof(ble_detect_detail_view, "RSSI", "%d dBm", info.rssi);
@@ -11746,8 +11863,10 @@ static int ble_adv_list_load_fn(int offset, int page_size, char names[][PAGED_ME
         char label[32];
         if (info.name[0] != '\0') {
             snprintf(label, sizeof(label), "%s", info.name);
+            privacy_redact_text(label);
         } else {
             snprintf(label, sizeof(label), "%02X:%02X:%02X", info.mac[3], info.mac[4], info.mac[5]);
+            privacy_redact_mac(label);
         }
 
         snprintf(names[loaded], PAGED_MENU_NAME_MAX, "%s | %.*s | %d dBm",
@@ -11960,9 +12079,11 @@ static void ble_adv_track_cb(lv_event_t *e) {
     if (advertiser_scan_get_device(selected_ble_adv_index, &info) == 0) {
         if (info.name[0] != '\0') {
             strncpy(target_label, info.name, sizeof(target_label) - 1);
+            privacy_redact_text(target_label);
         } else {
             snprintf(target_label, sizeof(target_label), "%02X:%02X:%02X:%02X:%02X:%02X",
                      info.mac[0], info.mac[1], info.mac[2], info.mac[3], info.mac[4], info.mac[5]);
+            privacy_redact_mac(target_label);
         }
     }
 
@@ -12019,10 +12140,13 @@ static void show_ble_adv_detail(int device_index) {
     char mac[18];
     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", info.mac[0], info.mac[1],
              info.mac[2], info.mac[3], info.mac[4], info.mac[5]);
+    privacy_redact_mac(mac);
 
     detail_view_add_info(ble_adv_detail_view, "Type", info.is_ibeacon ? "iBeacon" : "BLE Advertiser");
     if (info.name[0] != '\0') {
-        detail_view_add_info(ble_adv_detail_view, "Name", info.name);
+        char name_disp[32];
+        privacy_redact_text_copy(info.name, name_disp, sizeof(name_disp));
+        detail_view_add_info(ble_adv_detail_view, "Name", name_disp);
     }
     detail_view_add_info(ble_adv_detail_view, "MAC", mac);
     detail_view_add_info(ble_adv_detail_view, "Address Type", info.addr_type == 0 ? "Public" : "Random");
@@ -12127,8 +12251,10 @@ static int ble_gatt_list_load_fn(int offset, int page_size, char names[][PAGED_M
         char label[32];
         if (name[0] != '\0') {
             snprintf(label, sizeof(label), "%s", name);
+            privacy_redact_text(label);
         } else {
             snprintf(label, sizeof(label), "%02X:%02X:%02X", mac[3], mac[4], mac[5]);
+            privacy_redact_mac(label);
         }
 
         snprintf(names[loaded], PAGED_MENU_NAME_MAX, "GATT | %.*s | %d dBm", 20, label, rssi);
@@ -12255,10 +12381,12 @@ static void ble_gatt_track_cb(lv_event_t *e) {
                                   sizeof(name)) == 0) {
         if (name[0] != '\0') {
             strncpy(target_label, name, sizeof(target_label) - 1);
+            privacy_redact_text(target_label);
         } else {
             snprintf(target_label, sizeof(target_label), "%02X:%02X:%02X:%02X:%02X:%02X",
                      mac_bytes[0], mac_bytes[1], mac_bytes[2], mac_bytes[3], mac_bytes[4],
                      mac_bytes[5]);
+            privacy_redact_mac(target_label);
         }
     }
 
@@ -12320,10 +12448,13 @@ static void show_ble_gatt_detail(int device_index) {
     char mac[18];
     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X", mac_bytes[0], mac_bytes[1],
              mac_bytes[2], mac_bytes[3], mac_bytes[4], mac_bytes[5]);
+    privacy_redact_mac(mac);
 
     detail_view_add_info(ble_gatt_detail_view, "Type", "GATT Device");
     if (name[0] != '\0') {
-        detail_view_add_info(ble_gatt_detail_view, "Name", name);
+        char name_disp[32];
+        privacy_redact_text_copy(name, name_disp, sizeof(name_disp));
+        detail_view_add_info(ble_gatt_detail_view, "Name", name_disp);
     }
     detail_view_add_info(ble_gatt_detail_view, "MAC", mac);
     detail_view_add_infof(ble_gatt_detail_view, "RSSI", "%d dBm", rssi);
@@ -12341,6 +12472,7 @@ static void show_ble_gatt_detail(int device_index) {
 static void station_format_mac(const uint8_t mac[6], char *out, size_t out_size) {
     snprintf(out, out_size, "%02X:%02X:%02X:%02X:%02X:%02X",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    privacy_redact_mac(out);
 }
 
 static void station_lookup_ap_ssid(const uint8_t ap_bssid[6], char *ssid_out, size_t ssid_out_size) {
@@ -12424,6 +12556,7 @@ static int sta_list_load_fn(int offset, int page_size, char names[][PAGED_MENU_N
         station_format_mac(station_ap_list[i].station_mac, sta_mac, sizeof(sta_mac));
         bool has_vendor = ouis_lookup_vendor(sta_mac, sta_vendor, sizeof(sta_vendor));
         station_lookup_ap_ssid(station_ap_list[i].ap_bssid, ap_ssid, sizeof(ap_ssid));
+        privacy_redact_ssid(ap_ssid);
 
         for (int j = 0; j < (int)ap_count; j++) {
             if (memcmp(aps[j].bssid, station_ap_list[i].ap_bssid, 6) == 0) {
@@ -12524,6 +12657,7 @@ static int sta_multi_select_load_fn(int offset, int page_size, char names[][PAGE
         station_format_mac(station_ap_list[i].station_mac, sta_mac, sizeof(sta_mac));
         bool has_vendor = ouis_lookup_vendor(sta_mac, sta_vendor, sizeof(sta_vendor));
         station_lookup_ap_ssid(station_ap_list[i].ap_bssid, ap_ssid, sizeof(ap_ssid));
+        privacy_redact_ssid(ap_ssid);
 
         for (int j = 0; j < (int)ap_count; j++) {
             if (memcmp(aps[j].bssid, station_ap_list[i].ap_bssid, 6) == 0) {
@@ -12993,6 +13127,7 @@ static void ap_track_cb(lv_event_t *e) {
         } else {
             strncpy(ssid, (const char *)selected_ap.ssid, sizeof(ssid) - 1);
         }
+        privacy_redact_ssid(ssid);
         start_track_meter(true, ssid);
     }
 }
@@ -13064,7 +13199,9 @@ static void ap_connect_cb(lv_event_t *e) {
     ap_connect_ssid[sizeof(ap_connect_ssid) - 1] = '\0';
 
     char placeholder[64];
-    snprintf(placeholder, sizeof(placeholder), "Password for %.24s", ap_connect_ssid);
+    char ssid_disp[33];
+    privacy_redact_ssid_copy(ap_connect_ssid, ssid_disp, sizeof(ssid_disp));
+    snprintf(placeholder, sizeof(placeholder), "Password for %.24s", ssid_disp);
     keyboard_view_set_return_view(&options_menu_view);
     keyboard_view_set_submit_callback(ap_connect_password_cb);
     keyboard_view_set_placeholder(placeholder);
@@ -13136,12 +13273,14 @@ static void show_ap_detail(int ap_index) {
     ap_detail_view = detail_view_create(lv_scr_act(), NULL);
     reserve_detail_touch_bar_space(ap_detail_view);
     
+    privacy_redact_ssid(ssid);
     detail_view_add_info(ap_detail_view, "SSID", ssid);
     
     char bssid[18];
     snprintf(bssid, sizeof(bssid), "%02X:%02X:%02X:%02X:%02X:%02X",
              ap->bssid[0], ap->bssid[1], ap->bssid[2],
              ap->bssid[3], ap->bssid[4], ap->bssid[5]);
+    privacy_redact_mac(bssid);
     detail_view_add_info(ap_detail_view, compact_detail ? "BSSID" : "BSSID", bssid);
     
     detail_view_add_infof(ap_detail_view, compact_detail ? "Ch/RSSI" : "Channel / RSSI", "%d / %d dBm", ap->primary, ap->rssi);
@@ -13386,6 +13525,7 @@ static void show_station_detail(int station_index) {
     station_format_mac(station->station_mac, sta_mac, sizeof(sta_mac));
     station_format_mac(station->ap_bssid, ap_bssid, sizeof(ap_bssid));
     station_lookup_ap_ssid(station->ap_bssid, ap_ssid, sizeof(ap_ssid));
+    privacy_redact_ssid(ap_ssid);
 
     ouis_lookup_vendor(sta_mac, sta_vendor, sizeof(sta_vendor));
     ouis_lookup_vendor(ap_bssid, ap_vendor, sizeof(ap_vendor));

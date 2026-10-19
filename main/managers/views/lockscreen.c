@@ -1665,12 +1665,15 @@ static void lockscreen_input_handler(InputEvent *event) {
                         lockscreen_show_favorites(); return;
                     }
                 }
-#ifdef CONFIG_USE_TOUCHSCREEN
-                // With slide-to-unlock on, the drag gesture is the only way a
-                // touch unlocks; taps elsewhere do nothing.
-                if (s_slide_active) return;
-#endif
             }
+#ifdef CONFIG_USE_TOUCHSCREEN
+            // Slide-to-unlock is the sole unlock affordance while it is active:
+            // the gesture must not be bypassed by joystick, encoder, keyboard or
+            // exit-button input. Favorites ('down' above, 'f', or the hint tap
+            // handled above) stay reachable; every other input is ignored until
+            // the knob is dragged to the end.
+            if (s_slide_active) return;
+#endif
             ghostchi_mood_record_event(GHOSTCHI_MOOD_EVENT_WAKE, 4);
             lockscreen_on_correct();
         }

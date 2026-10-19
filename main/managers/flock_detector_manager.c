@@ -61,10 +61,23 @@ static const uint32_t camera_oui_packed[] = {
     FLOCK_CLS(FLOCK_CLASS_RING, 0xCC3BFB), FLOCK_CLS(FLOCK_CLASS_RING, 0xC4DBAD),
     FLOCK_CLS(FLOCK_CLASS_RING, 0x242BD6), FLOCK_CLS(FLOCK_CLASS_RING, 0x00B463),
     FLOCK_CLS(FLOCK_CLASS_RING, 0x50E467),   // Ring LLC
+    FLOCK_CLS(FLOCK_CLASS_NEST, 0x18B430), FLOCK_CLS(FLOCK_CLASS_NEST, 0x641666),  // Nest Labs
     FLOCK_CLS(FLOCK_CLASS_AXON, 0x0025DF),   // Axon Enterprise
     FLOCK_CLS(FLOCK_CLASS_HAK5, 0x001337),   // Hak5 Pineapple default MAC (mirrors PineAP detect)
 };
 #define CAMERA_OUI_COUNT (sizeof(camera_oui_packed) / sizeof(camera_oui_packed[0]))
+
+// Google-registered OUIs. These are shared by Chromecasts, Hubs, speakers and
+// the newer Nest cameras/doorbells (the battery doorbell is 38:86:F7), so an
+// OUI hit alone means nothing: a MAC here is only flagged as a Nest camera when
+// it also shows a sustained video-style uplink (see stream tracker below).
+// 38:86:F7 / 3C:5A:B4 / 54:60:09 / D8:6C:63 / F4:F5:E8 confirmed against the
+// registry mirrors; the rest are from memory, verify against IEEE before relying.
+static const uint32_t google_oui_packed[] = {
+    0x3886F7, 0x3C5AB4, 0x546009, 0xD86C63, 0xF4F5E8, 0xF4F5D8,
+    0xA47733, 0x20DFB9, 0x30FD38, 0x48D6D5, 0x1CF29A, 0x94EB2C,
+};
+#define GOOGLE_OUI_COUNT (sizeof(google_oui_packed) / sizeof(google_oui_packed[0]))
 
 typedef struct __attribute__((packed)) {
     uint16_t frame_ctrl, duration;
@@ -110,6 +123,40 @@ static void IRAM_ATTR enqueue_alert(FlockDetectMethod method, const uint8_t *mac
     portEXIT_CRITICAL_ISR(&s_alert_mux);
 }
 
+// ---- Stream-window diagnostics (sniffer callback -> drain task) ----
+// One entry per evaluated tracker window that carried real uplink volume, so
+// the thresholds can be tuned from the serial log against a live doorbell.
+
+typedef struct {
+    uint8_t mac[6];
+    int8_t rssi;
+    uint8_t channel;
+    uint16_t frames, big, maxrun;
+    uint32_t bytes;
+    bool flagged;
+} FlockStreamDiag;
+
+#define FLOCK_DIAG_QUEUE_SIZE 8
+static FlockStreamDiag s_diag_queue[FLOCK_DIAG_QUEUE_SIZE];
+static volatile size_t s_diag_head = 0;
+static volatile size_t s_diag_tail = 0;
+
+static void IRAM_ATTR enqueue_diag(const FlockStreamDiag *d) {
+    portENTER_CRITICAL_ISR(&s_alert_mux);
+    size_t next = (s_diag_head + 1) % FLOCK_DIAG_QUEUE_SIZE;
+    if (next != s_diag_tail) {
+        s_diag_queue[s_diag_head] = *d;
+        s_diag_head = next;
+    }
+    portEXIT_CRITICAL_ISR(&s_alert_mux);
+}
+
+// Methods that carry a vendor-specific signature rather than a bare OUI match.
+static inline bool method_is_high(FlockDetectMethod m) {
+    return m == FLOCK_DETECT_WILDCARD_PROBE || m == FLOCK_DETECT_SSID ||
+           m == FLOCK_DETECT_STREAM;
+}
+
 // ---- Hash-based detection table ----
 
 #define FLOCK_HASH_BUCKETS 16
@@ -121,6 +168,7 @@ static int *s_det_next = NULL;    // heap-allocated, FLOCK_MAX_DETECTIONS entrie
 static int s_count = 0;
 static bool s_running = false;
 static SemaphoreHandle_t s_mutex = NULL;
+static volatile bool s_show_all = false;  // log non-Flock vendor hits (sentry only)
 static FlockDetectorCallback s_cb = NULL;
 static void *s_cb_data = NULL;
 
@@ -164,8 +212,7 @@ static int det_insert(const char *mac, FlockDetectMethod method, int8_t rssi, ui
     d->rssi = rssi; d->channel = ch;
     d->device_class = cls;
     d->first_seen_ms = now; d->last_seen_ms = now; d->count = 1;
-    d->confidence = (method == FLOCK_DETECT_WILDCARD_PROBE || method == FLOCK_DETECT_SSID)
-                    ? FLOCK_CONF_HIGH : FLOCK_CONF_LOW;
+    d->confidence = method_is_high(method) ? FLOCK_CONF_HIGH : FLOCK_CONF_LOW;
     if (ssid && ssid[0]) strlcpy(d->ssid, ssid, FLOCK_SSID_STR_LEN); else d->ssid[0] = '\0';
     int bi = mac_hash(mac);
     s_det_next[idx] = s_det_bucket[bi];
@@ -205,6 +252,18 @@ static void drain_task_fn(void *arg) {
     while (s_running) {
         while (true) {
             portENTER_CRITICAL(&s_alert_mux);
+            if (s_diag_tail != s_diag_head) {
+                FlockStreamDiag dg = s_diag_queue[s_diag_tail];
+                s_diag_tail = (s_diag_tail + 1) % FLOCK_DIAG_QUEUE_SIZE;
+                portEXIT_CRITICAL(&s_alert_mux);
+                if (s_show_all)
+                glog("[FLOCK] stream %02x:%02x:%02x:%02x:%02x:%02x ch%u %ddBm | frames=%u big=%u "
+                     "run=%u bytes=%lu%s\n",
+                     dg.mac[0], dg.mac[1], dg.mac[2], dg.mac[3], dg.mac[4], dg.mac[5],
+                     dg.channel, dg.rssi, dg.frames, dg.big, dg.maxrun,
+                     (unsigned long)dg.bytes, dg.flagged ? " -> NEST" : "");
+                continue;
+            }
             if (s_alert_tail == s_alert_head) { portEXIT_CRITICAL(&s_alert_mux); break; }
             FlockAlertEntry e;
             memcpy(&e, &s_alert_queue[s_alert_tail], sizeof(e));
@@ -215,28 +274,40 @@ static void drain_task_fn(void *arg) {
             snprintf(ms, sizeof(ms), "%02x:%02x:%02x:%02x:%02x:%02x",
                      e.mac[0], e.mac[1], e.mac[2], e.mac[3], e.mac[4], e.mac[5]);
 
+            // The cooldown below throttles alerts, not the clock: keep the
+            // "last seen" time and signal current for every frame heard.
+            int seen_idx = det_find(ms);
+            if (seen_idx >= 0) {
+                s_dets[seen_idx].last_seen_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                s_dets[seen_idx].rssi = e.rssi;
+            }
+
             if (!should_suppress(ms)) {
                 int idx = det_find(ms);
-                FlockConfidence conf = (e.method == FLOCK_DETECT_WILDCARD_PROBE || e.method == FLOCK_DETECT_SSID)
-                                       ? FLOCK_CONF_HIGH : FLOCK_CONF_LOW;
+                FlockConfidence conf = method_is_high(e.method) ? FLOCK_CONF_HIGH : FLOCK_CONF_LOW;
                 if (idx >= 0) {
                     if (s_dets[idx].count < 0xFFFF) s_dets[idx].count++;
                     s_dets[idx].last_seen_ms = (uint32_t)(esp_timer_get_time() / 1000);
                     s_dets[idx].rssi = e.rssi;
                     s_dets[idx].channel = e.channel;
                     if (conf == FLOCK_CONF_HIGH) s_dets[idx].confidence = FLOCK_CONF_HIGH;
-                    if (s_dets[idx].device_class == FLOCK_CLASS_NONE) s_dets[idx].device_class = e.cls;
+                    if (e.method == FLOCK_DETECT_STREAM)
+                        strlcpy(s_dets[idx].method, flock_detector_method_str(e.method),
+                                FLOCK_METHOD_STR_LEN);
+                    if (s_dets[idx].device_class == FLOCK_CLASS_NONE || e.method == FLOCK_DETECT_STREAM)
+                        s_dets[idx].device_class = e.cls;
                     if (e.ssid[0] && !s_dets[idx].ssid[0])
                         strlcpy(s_dets[idx].ssid, e.ssid, FLOCK_SSID_STR_LEN);
                 } else {
                     idx = det_insert(ms, e.method, e.rssi, e.channel, e.ssid, e.cls);
                 }
-                if (conf == FLOCK_CONF_HIGH) {
+                if (conf == FLOCK_CONF_HIGH && idx >= 0 &&
+                    (s_show_all || flock_detector_is_flock(&s_dets[idx]))) {
                     const char *sig = (e.rssi > -50) ? "Strong" : (e.rssi > -70) ? "Medium" : "Weak";
                     glog("[FLOCK] Surveillance device detected! %s | MAC: %s | Signal: %s (%ddBm) | Ch: %u%s%s | Hits: %d\n",
                          flock_detector_method_str(e.method), ms, sig, e.rssi, e.channel,
                          e.ssid[0] ? " | SSID: " : "", e.ssid[0] ? e.ssid : "",
-                         (idx >= 0) ? s_dets[idx].count : 0);
+                         s_dets[idx].count);
                     pulse_once(&rgb_manager, 255, 255, 255);
                 }
                 if (idx >= 0 && s_cb) s_cb(&s_dets[idx], s_cb_data);
@@ -254,10 +325,15 @@ static uint8_t s_ch_count = 0;
 static uint8_t s_channels[WIFI_CHANNELS_MAX] = {0};
 static esp_timer_handle_t s_hop_timer = NULL;
 #define FLOCK_HOP_MS 250
+// Channel hold: while a Google-OUI MAC is pushing large uplink frames the hop
+// timer stays put so the stream tracker gets a contiguous window instead of a
+// 250 ms slice every few seconds. Written from the sniffer callback.
+static volatile int64_t s_hold_until_us = 0;
 
 static void hop_cb(void *arg) {
     if (!s_running) return;
     if (s_ch_count == 0) return;
+    if (esp_timer_get_time() < s_hold_until_us) return;
     s_ch_idx = (s_ch_idx + 1) % s_ch_count;
     esp_wifi_set_channel(s_channels[s_ch_idx], WIFI_SECOND_CHAN_NONE);
 }
@@ -327,6 +403,96 @@ static uint8_t IRAM_ATTR match_ssid_class(const char *ssid) {
     return FLOCK_CLASS_NONE;
 }
 
+// ---- Video-uplink stream tracker (sniffer callback context only) ----
+//
+// Camera uplinks are encrypted, but their shape is not: a streaming camera
+// sends long runs of near-MTU data frames from one station MAC (video I/P
+// frames), where a Chromecast/speaker mostly downloads or sends small frames.
+// Only Google-OUI stations are tracked. Thresholds are first guesses from the
+// traffic-pattern literature and are meant to be tuned from the [FLOCK] stream
+// log lines.
+#define STREAM_SLOTS        8
+#define STREAM_WIN_MS       2000   // evaluation window
+#define STREAM_STALE_MS     1000   // gap that discards a half-built window
+#define STREAM_BIG_LEN      1000   // sig_len at/above this counts as a video frame
+#define STREAM_MIN_FRAMES   60     // uplink frames needed in a window
+#define STREAM_MIN_BIG_PCT  50     // share of those that must be big
+#define STREAM_LOCK_BIG     8      // big frames before the channel is held
+#define STREAM_LOCK_MS      1500   // hold refreshed by each big frame after that
+#define STREAM_DIAG_BIG     10     // log windows with at least this many big frames
+
+typedef struct {
+    uint8_t mac[6];
+    bool used;
+    uint32_t win_start_ms, last_ms;
+    uint16_t frames, big, run, maxrun;
+    uint32_t bytes;
+} stream_trk_t;
+
+static stream_trk_t s_trk[STREAM_SLOTS];
+
+static inline bool IRAM_ATTR google_oui(const uint8_t *mac) {
+    uint32_t oui = ((uint32_t)mac[0] << 16) | ((uint32_t)mac[1] << 8) | mac[2];
+    for (size_t i = 0; i < GOOGLE_OUI_COUNT; i++) {
+        if (oui == google_oui_packed[i]) return true;
+    }
+    return false;
+}
+
+static void IRAM_ATTR stream_account(const uint8_t *sta, int len, int8_t rssi, uint8_t ch) {
+    int64_t now_us = esp_timer_get_time();
+    uint32_t now = (uint32_t)(now_us / 1000);
+
+    // Match an existing slot, else take a free one, else evict the stalest.
+    stream_trk_t *t = NULL, *victim = NULL;
+    for (int i = 0; i < STREAM_SLOTS; i++) {
+        if (s_trk[i].used && memcmp(s_trk[i].mac, sta, 6) == 0) { t = &s_trk[i]; break; }
+        if (!victim || (victim->used && (!s_trk[i].used || s_trk[i].last_ms < victim->last_ms)))
+            victim = &s_trk[i];
+    }
+    if (!t) {
+        t = victim;
+        memset(t, 0, sizeof(*t));
+        memcpy(t->mac, sta, 6);
+        t->used = true;
+        t->win_start_ms = now;
+    } else if ((now - t->last_ms) > STREAM_STALE_MS) {
+        // Channel hop gap: whatever we had is a stale fragment, start fresh.
+        uint8_t keep[6];
+        memcpy(keep, t->mac, 6);
+        memset(t, 0, sizeof(*t));
+        memcpy(t->mac, keep, 6);
+        t->used = true;
+        t->win_start_ms = now;
+    }
+    t->last_ms = now;
+
+    t->frames++;
+    t->bytes += (uint32_t)len;
+    if (len >= STREAM_BIG_LEN) {
+        t->big++;
+        if (++t->run > t->maxrun) t->maxrun = t->run;
+        if (t->big >= STREAM_LOCK_BIG) s_hold_until_us = now_us + (int64_t)STREAM_LOCK_MS * 1000;
+    } else {
+        t->run = 0;
+    }
+
+    if ((now - t->win_start_ms) < STREAM_WIN_MS) return;
+
+    bool flagged = (t->frames >= STREAM_MIN_FRAMES) &&
+                   ((uint32_t)t->big * 100 >= (uint32_t)t->frames * STREAM_MIN_BIG_PCT);
+    if (flagged) enqueue_alert(FLOCK_DETECT_STREAM, t->mac, rssi, ch, NULL, FLOCK_CLASS_NEST);
+    if (flagged || t->big >= STREAM_DIAG_BIG) {
+        FlockStreamDiag d = { .rssi = rssi, .channel = ch, .frames = t->frames, .big = t->big,
+                              .maxrun = t->maxrun, .bytes = t->bytes, .flagged = flagged };
+        memcpy(d.mac, t->mac, 6);
+        enqueue_diag(&d);
+    }
+    t->win_start_ms = now;
+    t->frames = t->big = t->run = t->maxrun = 0;
+    t->bytes = 0;
+}
+
 static void IRAM_ATTR flock_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (!buf || !s_running) return;
     if (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA) return;
@@ -337,6 +503,13 @@ static void IRAM_ATTR flock_sniffer_cb(void *buf, wifi_promiscuous_pkt_type_t ty
     int8_t rssi = pkt->rx_ctrl.rssi;
     if (rssi < -95) return;
     uint8_t ch = (uint8_t)pkt->rx_ctrl.channel;
+
+    // Station uplink data frames (ToDS=1, FromDS=0): addr2 is the station.
+    if (type == WIFI_PKT_DATA) {
+        uint8_t fc0 = hdr->frame_ctrl & 0xFF, fc1 = (hdr->frame_ctrl >> 8) & 0xFF;
+        if (((fc0 >> 2) & 0x03) == 2 && (fc1 & 0x03) == 0x01 && google_oui(hdr->addr2))
+            stream_account(hdr->addr2, len, rssi, ch);
+    }
 
     uint8_t c2 = oui_class(hdr->addr2);
     if (c2) {
@@ -433,6 +606,10 @@ esp_err_t flock_detector_start(void) {
     }
     s_alert_head = 0;
     s_alert_tail = 0;
+    s_diag_head = 0;
+    s_diag_tail = 0;
+    s_hold_until_us = 0;
+    memset(s_trk, 0, sizeof(s_trk));
     s_running = true;
 
     wifi_manager_start_monitor_mode(flock_sniffer_cb);
@@ -492,6 +669,12 @@ void flock_detector_clear_detections(void) {
     }
 }
 
+bool flock_detector_is_flock(const FlockDetection *det) {
+    return det && (det->device_class == FLOCK_CLASS_NONE || det->device_class == FLOCK_CLASS_FLOCK);
+}
+
+void flock_detector_set_show_all(bool show_all) { s_show_all = show_all; }
+
 void flock_detector_set_callback(FlockDetectorCallback cb, void *user_data) {
     s_cb = cb;
     s_cb_data = user_data;
@@ -504,6 +687,7 @@ const char* flock_detector_method_str(FlockDetectMethod method) {
         case FLOCK_DETECT_OUI_ADDR3:      return "OUI (BSSID)";
         case FLOCK_DETECT_SSID:           return "SSID keyword";
         case FLOCK_DETECT_WILDCARD_PROBE: return "Wildcard probe";
+        case FLOCK_DETECT_STREAM:         return "Video uplink";
         default:                          return "unknown";
     }
 }

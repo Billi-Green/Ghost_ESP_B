@@ -25,6 +25,7 @@
 
 #include "managers/views/sentry_view.h"
 #include "core/ouis.h"
+#include "core/utils.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "gui/accessibility_fonts.h"
@@ -50,12 +51,17 @@
 #include <stdio.h>
 #include <string.h>
 
-// Ghostchi faces (always linked; the lockscreen uses them) reused as the alert
-// mascot so the view shares the app's art instead of raw neon.
+// Ghostchi faces, reused as the alert mascot so the view shares the app's art
+// instead of raw neon. They are linked only in display builds: screenless
+// boards exclude the sprite sources to stay inside their app partition (see
+// the CONFIG_WITH_SCREEN block in main/CMakeLists.txt), so the references must
+// compile out there too. Same guard the lockscreen and plugin canvas use.
+#ifdef CONFIG_WITH_SCREEN
 extern const lv_img_dsc_t evil_50x50;
 extern const lv_img_dsc_t angry_50x50;
 extern const lv_img_dsc_t surpised_50x50;
 extern const lv_img_dsc_t what2_50x50;
+#endif
 
 #define SENTRY_RECENT 10
 #define SENTRY_REFRESH_MS 400
@@ -75,7 +81,7 @@ extern const lv_img_dsc_t what2_50x50;
 
 // hit categories
 enum { SENTRY_KIND_FLOCK = 0, SENTRY_KIND_TRACKER, SENTRY_KIND_SKIMMER,
-       SENTRY_KIND_GEAR, SENTRY_KIND_OTHER };
+       SENTRY_KIND_GEAR, SENTRY_KIND_OTHER, SENTRY_KIND_CAMERA };
 
 typedef struct {
     bool used;
@@ -212,6 +218,7 @@ static const char *ble_tag(BLEDetectDeviceType type) {
         case BLE_DETECT_DEVICE_CHAMELEON:   return "CHAMELN";
         case BLE_DETECT_DEVICE_META_GLASSES: return "META";
         case BLE_DETECT_DEVICE_GOOGLE_TAG:   return "GOOGLE";
+        case BLE_DETECT_DEVICE_NEST:         return "NEST";
         default:                            return "BLE";
     }
 }
@@ -227,6 +234,7 @@ static uint8_t ble_kind(BLEDetectDeviceType type) {
         case BLE_DETECT_DEVICE_CHIPOLO:
         case BLE_DETECT_DEVICE_FINDMY:
         case BLE_DETECT_DEVICE_GOOGLE_TAG: return SENTRY_KIND_TRACKER;
+        case BLE_DETECT_DEVICE_NEST:     return SENTRY_KIND_CAMERA;
         default:                         return SENTRY_KIND_OTHER;
     }
 }
@@ -236,7 +244,8 @@ static uint8_t ble_score(BLEDetectDeviceType type) {
         case BLE_DETECT_DEVICE_SKIMMER:   return 100;
         case BLE_DETECT_DEVICE_FLIPPER:
         case BLE_DETECT_DEVICE_CHAMELEON: return 90;
-        case BLE_DETECT_DEVICE_META_GLASSES: return 85;
+        case BLE_DETECT_DEVICE_META_GLASSES:
+        case BLE_DETECT_DEVICE_NEST:      return 85;
         case BLE_DETECT_DEVICE_AIRTAG:    return 80;
         case BLE_DETECT_DEVICE_TILE:
         case BLE_DETECT_DEVICE_SMARTTAG:
@@ -252,6 +261,7 @@ static uint32_t kind_color(uint8_t kind, bool alert) {
         case SENTRY_KIND_SKIMMER: return c_error;
         case SENTRY_KIND_FLOCK:   return alert ? c_error : c_warn;
         case SENTRY_KIND_GEAR:
+        case SENTRY_KIND_CAMERA:
         case SENTRY_KIND_TRACKER: return c_warn;
         default:                  return c_accent;
     }
@@ -264,6 +274,7 @@ static const char *flock_class_tag(uint8_t cls) {
         case FLOCK_CLASS_RING:   return "RING";
         case FLOCK_CLASS_AXON:   return "AXON";
         case FLOCK_CLASS_HAK5:   return "PINEAPPLE";
+        case FLOCK_CLASS_NEST:   return "NEST";
         default:                 return "FLOCK";
     }
 }
@@ -278,6 +289,7 @@ static const char *rec_category(const sentry_rec_t *r) {
             case FLOCK_CLASS_RING:   return "Doorbell camera";
             case FLOCK_CLASS_AXON:   return "Body camera";
             case FLOCK_CLASS_HAK5:   return "WiFi Pineapple (Hak5)";
+            case FLOCK_CLASS_NEST:   return "Nest camera / doorbell";
             default:                 return "Flock Safety camera";
         }
     }
@@ -285,18 +297,27 @@ static const char *rec_category(const sentry_rec_t *r) {
         case SENTRY_KIND_SKIMMER: return "Card skimmer";
         case SENTRY_KIND_GEAR:    return "Pentest hardware";
         case SENTRY_KIND_TRACKER: return "Tracker";
+        case SENTRY_KIND_CAMERA:  return "Nest camera / doorbell";
         default:                  return "BLE device";
     }
 }
 
 static const lv_img_dsc_t *kind_face(uint8_t kind) {
+#ifdef CONFIG_WITH_SCREEN
     switch (kind) {
         case SENTRY_KIND_FLOCK:
         case SENTRY_KIND_SKIMMER: return &evil_50x50;
         case SENTRY_KIND_GEAR:    return &angry_50x50;
+        case SENTRY_KIND_CAMERA:
         case SENTRY_KIND_TRACKER: return &surpised_50x50;
         default:                  return &what2_50x50;
     }
+#else
+    // Screenless build: no ghostchi sprites are linked, so the alert overlay
+    // simply gets no mascot. lv_img_set_src() accepts NULL.
+    (void)kind;
+    return NULL;
+#endif
 }
 
 // ---- recent-device cache --------------------------------------------------
@@ -322,7 +343,8 @@ static int rec_slot(void) {
 
 static void rec_upsert(const char *mac, bool ble, uint8_t kind, uint8_t flock_class,
                        uint8_t score, bool alert, int8_t rssi, uint8_t ch,
-                       uint32_t color, const char *tag, const char *name, const char *sub) {
+                       uint32_t color, const char *tag, const char *name, const char *sub,
+                       uint32_t seen_ms) {
     if (!s_rec) return;
     int i = rec_find(mac);
     if (i < 0) {
@@ -340,7 +362,10 @@ static void rec_upsert(const char *mac, bool ble, uint8_t kind, uint8_t flock_cl
     s_rec[i].rssi = rssi;
     s_rec[i].channel = ch;
     s_rec[i].color = color;
-    s_rec[i].last_seen = now_ms();
+    // Real time the radio last heard it (merges run every tick, so now_ms()
+    // would pin every row at "just now"). Never move backwards.
+    if (seen_ms == 0 || seen_ms > now_ms()) seen_ms = now_ms();
+    if (seen_ms > s_rec[i].last_seen) s_rec[i].last_seen = seen_ms;
     if (s_rec[i].hits < 0xFFFFFFFFu) s_rec[i].hits++;
     snprintf(s_rec[i].tag, sizeof(s_rec[i].tag), "%s", tag);
     if (name && name[0]) snprintf(s_rec[i].name, sizeof(s_rec[i].name), "%s", name);
@@ -362,7 +387,8 @@ static void sentry_merge(void) {
         rec_upsert(d->mac, false, SENTRY_KIND_FLOCK, cls,
                    (uint8_t)(vendor ? 85 : (high ? 95 : 50)), alert,
                    d->rssi, d->channel, alert ? c_error : c_warn,
-                   flock_class_tag(cls), d->ssid[0] ? d->ssid : d->mac, d->method);
+                   flock_class_tag(cls), d->ssid[0] ? d->ssid : d->mac, d->method,
+                   d->last_seen_ms);
     }
 
     int bc = ble_device_detect_get_count();
@@ -378,7 +404,7 @@ static void sentry_merge(void) {
                          : (info.subtype[0] ? info.subtype : mac);
         rec_upsert(mac, true, kind, FLOCK_CLASS_NONE, score, alert, info.rssi, 0,
                    kind_color(kind, alert), ble_tag(info.type), name,
-                   ble_device_detect_type_to_string(info.type));
+                   ble_device_detect_type_to_string(info.type), info.last_seen_ms);
     }
 
     // No staleness eviction: a device seen once stays in the cache until ten
@@ -407,21 +433,42 @@ static void sentry_merge(void) {
     s_rec_count = w;
 }
 
+// "seen 5s ago" style age of the last sighting; "now" while it is live.
+static void format_ago(uint32_t last_seen, char *out, size_t os) {
+    uint32_t now = now_ms();
+    uint32_t s = (now > last_seen) ? (now - last_seen) / 1000 : 0;
+    if (s < 2) snprintf(out, os, "seen now");
+    else if (s < 60) snprintf(out, os, "seen %us ago", (unsigned)s);
+    else if (s < 3600) snprintf(out, os, "seen %um ago", (unsigned)(s / 60));
+    else snprintf(out, os, "seen %uh ago", (unsigned)(s / 3600));
+}
+
 static void format_rec(const sentry_rec_t *r, char *head, size_t hs, char *det, size_t ds) {
-    snprintf(head, hs, "%s  %s", r->tag, r->name);
-    if (r->ble) snprintf(det, ds, "%s  %ddBm", r->mac, (int)r->rssi);
-    else snprintf(det, ds, "%s  %ddBm ch%u", r->mac, (int)r->rssi, (unsigned)r->channel);
+    /* r->name can be an SSID or a MAC; r->mac is always a formatted MAC. Redact
+     * stack copies only -- s_rec[] stays raw for parse/compare/track logic. */
+    char name[sizeof(r->name)];
+    privacy_redact_ssid_copy(r->name, name, sizeof(name));
+    char mac[sizeof(r->mac)];
+    snprintf(mac, sizeof(mac), "%s", r->mac);
+    privacy_redact_mac(mac);
+    snprintf(head, hs, "%s  %s", r->tag, name);
+    char ago[16];
+    format_ago(r->last_seen, ago, sizeof(ago));
+    if (r->ble) snprintf(det, ds, "%s  %ddBm  %s", mac, (int)r->rssi, ago);
+    else snprintf(det, ds, "%s  %ddBm ch%u  %s", mac, (int)r->rssi, (unsigned)r->channel, ago);
 }
 
 // ---- radios ---------------------------------------------------------------
 
 static void radio_start_flock(void) {
+    flock_detector_set_show_all(true);
     if (flock_detector_is_running()) return;
     flock_detector_init();
     if (flock_detector_start() == ESP_OK) s_flock_started = true;
 }
 
 static void radio_stop_flock(void) {
+    flock_detector_set_show_all(false);
     if (s_flock_started) {
         flock_detector_stop();
         s_flock_started = false;
@@ -518,16 +565,21 @@ static void show_alert(const sentry_rec_t *r) {
     lv_obj_set_style_text_color(tag, lv_color_hex(r->color), 0);
     lv_obj_set_style_text_font(tag, accessibility_get_font_title(), 0);
 
+    char name[sizeof(r->name)];
+    privacy_redact_ssid_copy(r->name, name, sizeof(name));
     lv_obj_t *line = lv_label_create(alert_overlay);
-    lv_label_set_text(line, r->name);
+    lv_label_set_text(line, name);
     lv_obj_set_style_text_font(line, accessibility_get_font_body(), 0);
     lv_obj_set_style_text_color(line, lv_color_hex(c_text), 0);
     lv_obj_set_width(line, LV_PCT(100));
     lv_obj_set_style_text_align(line, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(line, LV_LABEL_LONG_DOT);
 
+    char mac[sizeof(r->mac)];
+    snprintf(mac, sizeof(mac), "%s", r->mac);
+    privacy_redact_mac(mac);
     lv_obj_t *sub = lv_label_create(alert_overlay);
-    lv_label_set_text_fmt(sub, "%s  %ddBm", r->mac, (int)r->rssi);
+    lv_label_set_text_fmt(sub, "%s  %ddBm", mac, (int)r->rssi);
     lv_obj_set_style_text_font(sub, accessibility_get_font_small(), 0);
     lv_obj_set_style_text_color(sub, lv_color_hex(c_dim), 0);
     lv_obj_set_width(sub, LV_PCT(100));
@@ -737,6 +789,7 @@ static void sentry_track_cb(lv_event_t *event) {
     char label[48];
     if (is_ble) snprintf(label, sizeof(label), "%s", s_detail->name);
     else snprintf(label, sizeof(label), "%s %s", s_detail->tag, s_detail->name);
+    privacy_redact_ssid(label);  /* title only; tracking uses the raw MAC below */
 
     if (is_ble) {
         int idx = ble_index_for_mac(s_detail->mac);
@@ -785,9 +838,16 @@ static void open_detail(void) {
     char vendor[64] = "Unknown";
     (void)ouis_lookup_vendor(s_detail->mac, vendor, sizeof(vendor));
 
+    /* Display copies only: s_detail stays raw for parse/compare/track. */
+    char name[sizeof(s_detail->name)];
+    privacy_redact_ssid_copy(s_detail->name, name, sizeof(name));
+    char mac[sizeof(s_detail->mac)];
+    snprintf(mac, sizeof(mac), "%s", s_detail->mac);
+    privacy_redact_mac(mac);
+
     detail_view_add_info(detail, "Category", rec_category(s_detail));
-    detail_view_add_info(detail, "Name", s_detail->name);
-    detail_view_add_info(detail, "MAC", s_detail->mac);
+    detail_view_add_info(detail, "Name", name);
+    detail_view_add_info(detail, "MAC", mac);
     detail_view_add_info(detail, "Vendor", vendor);
     if (s_detail->sub[0]) detail_view_add_info(detail, "Type", s_detail->sub);
     if (!s_detail->ble) {
@@ -797,6 +857,11 @@ static void open_detail(void) {
     detail_view_add_infof(detail, "Signal", "%d dBm", (int)s_detail->rssi);
     detail_view_add_infof(detail, "Hits", "%u", (unsigned)s_detail->hits);
     detail_view_add_infof(detail, "Age", "%us", (unsigned)((now_ms() - s_detail->first_seen) / 1000));
+    {
+        char ago[16];
+        format_ago(s_detail->last_seen, ago, sizeof(ago));
+        detail_view_add_info(detail, "Last seen", ago + 5);  // drop the "seen " prefix
+    }
 
     detail_view_add_action(detail, "Track", sentry_track_cb, NULL);
     detail_view_add_back(detail, detail_back_cb, NULL);
@@ -1117,6 +1182,12 @@ static void update_display_cb(lv_timer_t *timer) {
 
     // Alert on the first alert-worthy device not seen in the cooldown window;
     // the first tick only marks what is already in range.
+    // While the lockscreen overlay is up, popups would be drawn above it (and
+    // swallow the unlock); drop any showing and hold new ones until unlock.
+    // Nothing is marked as seen, so a device still in range alerts afterwards.
+    const bool locked = display_manager_is_lockscreen_active();
+    if (locked) hide_alert();
+
     const sentry_rec_t *pick = NULL;
     for (int i = 0; i < s_rec_count && pick == NULL; i++) {
         if (!s_rec[i].alert) continue;
@@ -1129,7 +1200,7 @@ static void update_display_cb(lv_timer_t *timer) {
     }
     if (!s_alert_primed) {
         s_alert_primed = true;
-    } else if (pick != NULL) {
+    } else if (pick != NULL && !locked) {
         alert_mark(pick->mac);
         show_alert(pick);
     }

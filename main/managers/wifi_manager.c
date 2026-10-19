@@ -102,12 +102,6 @@ void music_visualizer_view_update(const uint8_t *amplitudes,
 #define MDNS_NAME_BUF_LEN 65
 #define ARP_DELAY_MS 500
 
-// Persistent mDNS result storage (heap-allocated)
-static mdns_device_t *g_mdns_results = NULL;
-static int g_mdns_result_count = 0;
-static volatile bool g_mdns_scan_running = false;
-static volatile bool g_mdns_scan_done = false;
-
 #define BEACON_LIST_MAX 16
 #define BEACON_SSID_MAX_LEN 32
 
@@ -665,24 +659,6 @@ size_t wireshark_channels_count = 0;
 // Helper function forward declaration
 static void sanitize_ssid_and_check_hidden(const uint8_t* input_ssid, char* output_buffer, size_t buffer_size);
 
-struct service_info {
-    const char *query;
-    const char *type;
-};
-
-// Store in flash: const ensures this large-ish static table is placed in .rodata
-static const struct service_info services[] = {{"_http", "Web Server Enabled Device"},
-                                              {"_ssh", "SSH Server"},
-                                              {"_ipp", "Printer (IPP)"},
-                                              {"_googlecast", "Google Cast"},
-                                              {"_raop", "AirPlay"},
-                                              {"_smb", "SMB File Sharing"},
-                                              {"_hap", "HomeKit Accessory"},
-                                              {"_spotify-connect", "Spotify Connect Device"},
-                                              {"_printer", "Printer (Generic)"},
-                                              {"_mqtt", "MQTT Broker"}};
-
-#define NUM_SERVICES (sizeof(services) / sizeof(services[0]))
 
 struct DeviceInfo {
     struct ip4_addr ip;
@@ -3890,163 +3866,6 @@ void wifi_manager_stop_beacon() {
     beacon_spam_stop();
 }
 
-void wifi_manager_start_ip_lookup() {
-    wifi_ap_record_t ap_info;
-    if (esp_wifi_sta_get_ap_info(&ap_info) != ESP_OK || ap_info.rssi == 0) {
-        printf("Not connected to an Access Point.\n");
-        return;
-    }
-
-    g_mdns_result_count = 0;
-    bool store_results = (g_mdns_results != NULL);
-    bool was_running = g_mdns_scan_running;
-    g_mdns_scan_running = true;
-
-    esp_netif_ip_info_t ip_info;
-    if (esp_netif_get_ip_info(esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"), &ip_info) ==
-        ESP_OK) {
-        printf("Connected. Proceeding with IP lookup...\n");
-
-        for (int s = 0; s < NUM_SERVICES; s++) {
-            if (!g_mdns_scan_running) break;
-
-            int retries = 0;
-            mdns_result_t *mdnsresult = NULL;
-
-            while (retries < 5 && mdnsresult == NULL && g_mdns_scan_running) {
-                mdns_query_ptr(services[s].query, "_tcp", 2000, 30, &mdnsresult);
-                if (mdnsresult == NULL) {
-                    retries++;
-                    printf("Retrying mDNS query for service: %s (Attempt %d)\n",
-                           services[s].query, retries);
-                    vTaskDelay(pdMS_TO_TICKS(500));
-                }
-            }
-
-            if (mdnsresult != NULL) {
-                printf("mDNS query succeeded for service: %s\n", services[s].query);
-
-                mdns_result_t *current_result = mdnsresult;
-                while (current_result != NULL) {
-                    char ip_str[INET_ADDRSTRLEN] = {0};
-                    mdns_ip_addr_t *addr_item = current_result->addr;
-                    bool has_v4 = false;
-                    while (addr_item != NULL) {
-                        if (addr_item->addr.type == IPADDR_TYPE_V4) {
-                            inet_ntop(AF_INET, &addr_item->addr.u_addr.ip4, ip_str, INET_ADDRSTRLEN);
-                            has_v4 = true;
-                            break;
-                        }
-                        addr_item = addr_item->next;
-                    }
-                    if (!has_v4) {
-                        strncpy(ip_str, "0.0.0.0", sizeof(ip_str));
-                    }
-
-                    if (store_results && g_mdns_result_count < MDNS_MAX_DEVICES) {
-                        bool duplicate = false;
-                        for (int d = 0; d < g_mdns_result_count; d++) {
-                            if (strcmp(g_mdns_results[d].ip, ip_str) == 0) {
-                                duplicate = true;
-                                break;
-                            }
-                        }
-                        if (!duplicate) {
-                            mdns_device_t *dev = &g_mdns_results[g_mdns_result_count];
-                            memset(dev, 0, sizeof(mdns_device_t));
-                            if (current_result->hostname) {
-                                strncpy(dev->hostname, current_result->hostname, sizeof(dev->hostname) - 1);
-                            }
-                            strncpy(dev->ip, ip_str, sizeof(dev->ip) - 1);
-                            dev->port = current_result->port;
-                            strncpy(dev->service_type, services[s].type, sizeof(dev->service_type) - 1);
-                            g_mdns_result_count++;
-                        }
-                    }
-
-                    printf("Device at: %s\n", ip_str);
-                    printf("  Name: %s\n", current_result->hostname);
-                    printf("  Type: %s\n", services[s].type);
-                    printf("  Port: %u\n", current_result->port);
-
-                    current_result = current_result->next;
-                }
-
-                mdns_query_results_free(mdnsresult);
-            } else {
-                printf("Failed to find devices for service: %s after %d retries\n",
-                       services[s].query, retries);
-            }
-        }
-    } else {
-        printf("Can't get network interface info.\n");
-    }
-
-    printf("IP Scan Done. Found %d devices.\n", g_mdns_result_count);
-    if (!was_running) {
-        g_mdns_scan_running = false;
-    }
-}
-
-static void wifi_manager_ip_lookup_task(void *pvParameters) {
-    (void)pvParameters;
-    wifi_manager_start_ip_lookup();
-    g_mdns_scan_done = true;
-    vTaskDelete(NULL);
-}
-
-esp_err_t wifi_manager_start_ip_lookup_async(void) {
-    if (g_mdns_scan_running) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    wifi_manager_ip_lookup_clear();
-    g_mdns_results = malloc(sizeof(mdns_device_t) * MDNS_MAX_DEVICES);
-    if (!g_mdns_results) {
-        return ESP_ERR_NO_MEM;
-    }
-    memset(g_mdns_results, 0, sizeof(mdns_device_t) * MDNS_MAX_DEVICES);
-    g_mdns_scan_running = true;
-    g_mdns_scan_done = false;
-    BaseType_t ret = xTaskCreate(wifi_manager_ip_lookup_task, "mdns_scan", 8192, NULL, 5, NULL);
-    if (ret != pdPASS) {
-        g_mdns_scan_running = false;
-        free(g_mdns_results);
-        g_mdns_results = NULL;
-        return ESP_FAIL;
-    }
-    return ESP_OK;
-}
-
-bool wifi_manager_ip_lookup_check_done(void) {
-    return g_mdns_scan_done;
-}
-
-void wifi_manager_ip_lookup_finish_async(void) {
-    g_mdns_scan_running = false;
-}
-
-bool wifi_manager_ip_lookup_is_running(void) {
-    return g_mdns_scan_running && !g_mdns_scan_done;
-}
-
-int wifi_manager_ip_lookup_get_count(void) {
-    return g_mdns_result_count;
-}
-
-const mdns_device_t* wifi_manager_ip_lookup_get_device(int index) {
-    if (index < 0 || index >= g_mdns_result_count) {
-        return NULL;
-    }
-    return &g_mdns_results[index];
-}
-
-void wifi_manager_ip_lookup_clear(void) {
-    g_mdns_result_count = 0;
-    if (g_mdns_results) {
-        free(g_mdns_results);
-        g_mdns_results = NULL;
-    }
-}
 void wifi_manager_connect_wifi(const char *ssid, const char *password) {
     if (ssid == NULL || ssid[0] == '\0') {
         printf("No SSID provided\n");

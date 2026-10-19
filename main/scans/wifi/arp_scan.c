@@ -59,6 +59,7 @@ static arp_host_t *g_arp_results = NULL;
 static int g_arp_result_count = 0;
 static volatile bool g_arp_scan_running = false;
 static volatile bool g_arp_scan_done = false;
+static volatile bool g_arp_task_active = false;  // async task alive (even if cancelled)
 
 // Live progress tracking (read from UI poll timer)
 static volatile int g_arp_progress_pass = 0;
@@ -436,8 +437,11 @@ static void process_batch(arp_scanner_ctx_t *ctx, uint32_t batch_start, uint32_t
  * Runs multiple passes, unioning results across passes. Inter-pass delays
  * give power-saving mobile clients a chance to wake up and respond.
  * Technique inspired by DecentLabs/officeAir (MIT-licensed).
+ *
+ * Callers must have set g_arp_scan_running; clearing it requests cancellation.
+ * @param report print the result table and save it to the SD card
  */
-bool arp_scan_subnet(void) {
+static bool arp_scan_run(bool report) {
     arp_scanner_ctx_t *ctx = arp_scanner_init();
     if (!ctx) {
         glog("Failed to initialize ARP scanner context\n");
@@ -536,6 +540,11 @@ bool arp_scan_subnet(void) {
     ctx->hosts = NULL;
     g_arp_result_count = limit;
 
+    if (!report) {
+        arp_scanner_cleanup(ctx);
+        return true;
+    }
+
     // Open scan file for saving results
     scan_file_t sf = SCAN_FILE_INIT;
     bool saving = (scan_file_open(&sf, "arp_scan", "txt") == ESP_OK);
@@ -572,31 +581,57 @@ bool arp_scan_subnet(void) {
     return true;
 }
 
-/**
- * @brief FreeRTOS task wrapper for async ARP scan
- */
-static void arp_scan_task(void *pvParameters) {
-    (void)pvParameters;
-    arp_scan_subnet();
-    g_arp_scan_done = true;
-    vTaskDeleteWithCaps(NULL);
-}
-
-esp_err_t arp_scan_start_async(void) {
-    if (g_arp_scan_running) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    arp_scan_clear_results();
-    g_arp_scan_running = true;
-    g_arp_scan_done = false;
+static void arp_scan_reset_progress(void) {
     g_arp_progress_pass = 0;
     g_arp_progress_total_passes = 0;
     g_arp_progress_scanned = 0;
     g_arp_progress_total_hosts = 0;
     g_arp_progress_found = 0;
+}
+
+bool arp_scan_run_blocking(bool report) {
+    if (g_arp_scan_running || g_arp_task_active) {
+        return false;
+    }
+    arp_scan_reset_progress();
+    g_arp_scan_running = true;
+    bool ok = arp_scan_run(report);
+    g_arp_scan_running = false;
+    return ok;
+}
+
+bool arp_scan_subnet(void) {
+    return arp_scan_run_blocking(true);
+}
+
+/**
+ * @brief FreeRTOS task wrapper for async ARP scan
+ */
+static void arp_scan_task(void *pvParameters) {
+    (void)pvParameters;
+    arp_scan_run(true);
+    // Release the scan on our own so CLI starts (which have no poll timer to
+    // call arp_scan_finish_async) can run again.
+    g_arp_scan_running = false;
+    g_arp_task_active = false;
+    g_arp_scan_done = true;
+    vTaskDeleteWithCaps(NULL);
+}
+
+esp_err_t arp_scan_start_async(void) {
+    // g_arp_task_active also covers a cancelled scan that is still winding down.
+    if (g_arp_scan_running || g_arp_task_active) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    arp_scan_clear_results();
+    g_arp_scan_running = true;
+    g_arp_task_active = true;
+    g_arp_scan_done = false;
+    arp_scan_reset_progress();
     BaseType_t ret = xTaskCreate_psram(arp_scan_task, "arp_scan", 8192, NULL, 5, NULL);
     if (ret != pdPASS) {
         g_arp_scan_running = false;
+        g_arp_task_active = false;
         return ESP_FAIL;
     }
     return ESP_OK;

@@ -8,6 +8,7 @@
 #include "managers/http_proxy.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "gui/asset_pack.h"
 #include "managers/ap_manager.h"
 #include "managers/plugin_installer.h"
@@ -1348,6 +1349,21 @@ bool cloud_store_apps_available(void) {
     return heap_caps_get_total_size(MALLOC_CAP_SPIRAM) > 0;
 }
 
+// Only the uplink interfaces count: the soft-AP netif always has an IP while
+// the AP is up, so the default netif would report "online" with no internet.
+bool cloud_store_has_internet(void) {
+    static const char *const uplinks[] = {"WIFI_STA_DEF", "ETH_DEF"};
+    for (size_t i = 0; i < sizeof(uplinks) / sizeof(uplinks[0]); i++) {
+        esp_netif_t *netif = esp_netif_get_handle_from_ifkey(uplinks[i]);
+        esp_netif_ip_info_t ip;
+        if (netif && esp_netif_is_netif_up(netif) &&
+            esp_netif_get_ip_info(netif, &ip) == ESP_OK && ip.ip.addr != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Report how deep this task actually got. The stack budget above is only a
 // guess until something measures it: FreeRTOS lowers the high-water mark as a
 // task runs deeper, so reading it just before the task deletes itself gives the
@@ -1389,7 +1405,11 @@ static void refresh_task(void *arg) {
     if (err == ESP_OK) {
         s_ctx->status.error[0] = '\0';
     } else {
-        strncpy(s_ctx->status.error, "Could not load cloud manifest", sizeof(s_ctx->status.error) - 1);
+        // A dropped connection is by far the most common cause; say so.
+        strncpy(s_ctx->status.error,
+                cloud_store_has_internet() ? "Could not load cloud manifest"
+                                           : "No internet. Connect to WiFi first",
+                sizeof(s_ctx->status.error) - 1);
         s_ctx->status.error[sizeof(s_ctx->status.error) - 1] = '\0';
     }
     s_ctx->task_running = false;
@@ -1477,7 +1497,9 @@ static void install_task(void *arg) {
         } else {
             ESP_LOGW(TAG, "install failed for %s: %s", item.id, esp_err_to_name(err));
             const char *msg = (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_STATE)
-                ? "SD card required" : esp_err_to_name(err);
+                ? "SD card required"
+                : !cloud_store_has_internet() ? "No internet. Connect to WiFi first"
+                : esp_err_to_name(err);
             set_status(CLOUD_STORE_STATE_FAILED, item.name, 0, 0, msg);
         }
         // Drop the partial download on cancel/failure so we don't leave broken
