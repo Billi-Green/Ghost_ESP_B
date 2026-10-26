@@ -418,7 +418,7 @@ static esp_err_t gps_soft_restart_parser(const char *reason, const minmea_soft_s
 void gps_manager_set_peer_gps_preferred(bool enabled) {
     taskENTER_CRITICAL(&gps_state_lock);
     gps_peer_preferred = gps_is_peer_only_profile() || enabled;
-    if (!enabled) {
+    if (!gps_peer_preferred) {
         gps_peer_last_update_tick = 0;
         gps_peer_has_seen_update = false;
     }
@@ -524,7 +524,7 @@ bool gps_manager_get_wardrive_snapshot(gps_t *out_gps, bool *using_peer) {
     if (!out_gps) return false;
     taskENTER_CRITICAL(&gps_state_lock);
     gps_t local = gps_local_snapshot;
-    bool local_ok = gps_last_update_tick != 0 &&
+    bool local_ok = !gps_is_peer_only_profile() && gps_last_update_tick != 0 &&
                     xTaskGetTickCount() - gps_last_update_tick <= pdMS_TO_TICKS(GPS_STALE_UPDATE_TIMEOUT_MS) &&
                     local.valid && local.fix >= GPS_FIX_GPS && local.fix_mode >= GPS_MODE_2D && local.sats_in_use >= 3;
     bool peer_ok = gps_peer_last_update_tick != 0 &&
@@ -800,6 +800,11 @@ void gps_manager_init(GPSManager *manager) {
     nmea_parser_config_t config = NMEA_PARSER_CONFIG_DEFAULT();
     uint8_t current_rx_pin=0; 
     uint8_t custom_gps_pin=settings_get_gps_rx_pin(&G_Settings); //load custom pin from NVS settings
+
+#ifdef CONFIG_BANSHEE_LITE_S3
+    /* Fixed wiring: module TX feeds the profile RX pin. Ignore old NVS pins. */
+    custom_gps_pin = 0;
+#endif
 
 #ifdef CONFIG_HAS_GPS // need to verify we have gps enabled
     current_rx_pin = CONFIG_GPS_UART_RX_PIN;
