@@ -5874,6 +5874,7 @@ static bool dm_handle_crowpanel_home_event(const InputEvent *event) {
 #endif
 
 
+#ifdef CONFIG_BANSHEE_LITE_C5
 static void dm_transform_c5_touch_event(InputEvent *event) {
   if (!event || event->type != INPUT_TYPE_TOUCH) return;
 

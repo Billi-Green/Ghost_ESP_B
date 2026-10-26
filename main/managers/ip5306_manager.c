@@ -1,13 +1,13 @@
 #include "managers/ip5306_manager.h"
+#include "sdkconfig.h"
 
 #ifdef CONFIG_USE_IP5306_POWER_MANAGER
 
+#include "core/glog.h"
 #include "driver/i2c_master.h"
-#include "esp_log.h"
+#include "esp_err.h"
 #include "i2c_shared.h"
 #include <stddef.h>
-
-static const char *TAG = "IP5306";
 
 #define IP5306_I2C_PORT       I2C_NUM_0
 #define IP5306_I2C_SDA_PIN   ((gpio_num_t)CONFIG_I2C_MANAGER_0_SDA)
@@ -102,7 +102,7 @@ static esp_err_t ip5306_configure(void)
         esp_err_t ret = ip5306_modify8(settings[i].reg, settings[i].mask,
                                        settings[i].value);
         if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to configure register 0x%02X: %s",
+            glog("IP5306: Failed to configure register 0x%02X: %s\n",
                      settings[i].reg, esp_err_to_name(ret));
             return ret;
         }
@@ -121,14 +121,14 @@ bool ip5306_manager_init(void)
         IP5306_I2C_PORT, IP5306_I2C_SDA_PIN, IP5306_I2C_SCL_PIN, true,
         &s_bus, NULL);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get I2C bus: %s", esp_err_to_name(ret));
+        glog("IP5306: Failed to get I2C bus: %s\n", esp_err_to_name(ret));
         return false;
     }
 
     ret = i2c_shared_get_device(s_bus, CONFIG_IP5306_I2C_ADDRESS,
                                 IP5306_SCL_SPEED_HZ, &s_dev);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to attach device at 0x%02X: %s",
+        glog("IP5306: Failed to attach device at 0x%02X: %s\n",
                  CONFIG_IP5306_I2C_ADDRESS, esp_err_to_name(ret));
         return false;
     }
@@ -136,7 +136,7 @@ bool ip5306_manager_init(void)
     uint8_t read0 = 0;
     ret = ip5306_read8(IP5306_REG_READ0, &read0);
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "No IP5306 response at 0x%02X: %s",
+        glog("IP5306: No IP5306 response at 0x%02X: %s\n",
                  CONFIG_IP5306_I2C_ADDRESS, esp_err_to_name(ret));
         return false;
     }
@@ -147,10 +147,9 @@ bool ip5306_manager_init(void)
     }
 
     s_initialized = true;
-    ESP_LOGI(TAG,
-             "Initialized at 0x%02X on I2C0 SDA=%d SCL=%d; charge current code=0x%02X",
-             CONFIG_IP5306_I2C_ADDRESS, CONFIG_I2C_MANAGER_0_SDA,
-             CONFIG_I2C_MANAGER_0_SCL, CONFIG_IP5306_CHARGE_CURRENT_CODE);
+    glog("IP5306: Initialized at 0x%02X on I2C0 SDA=%d SCL=%d; charge current code=0x%02X\n",
+              CONFIG_IP5306_I2C_ADDRESS, CONFIG_I2C_MANAGER_0_SDA,
+              CONFIG_I2C_MANAGER_0_SCL, CONFIG_IP5306_CHARGE_CURRENT_CODE);
     return true;
 }
 
